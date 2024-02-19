@@ -1,0 +1,16 @@
+[package]
+name = "testing"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+image = "0.24"
+ocrs = "0.4"
+read-process-memory = "0.1.6"
+rten = "0.3"
+rten-imageio = "0.3"
+rten-tensor = "0.3"
+winapi = { version = "0.3", features=["wingdi", "winuser", "windef", "impl-default"] }
+windows-capture = "1.0"
