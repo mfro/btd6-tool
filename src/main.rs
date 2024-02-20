@@ -1,6 +1,5 @@
 use image::{
-    imageops::{crop_imm, resize},
-    DynamicImage, GenericImageView, ImageBuffer, Rgba, RgbaImage,
+    imageops::{crop_imm, resize}, DynamicImage, GenericImage, GenericImageView, ImageBuffer, Rgba, RgbaImage
 };
 use std::{
     cmp::Ordering,
@@ -10,7 +9,11 @@ use std::{
     time::{Duration, Instant},
 };
 use windows_capture::{
-    capture::WindowsCaptureHandler, frame::Frame, graphics_capture_api::InternalCaptureControl,
+    capture::WindowsCaptureHandler,
+    frame::Frame,
+    graphics_capture_api::InternalCaptureControl,
+    settings::{ColorFormat, Settings},
+    window::Window,
 };
 
 mod identify;
@@ -71,12 +74,6 @@ fn preprocess_image(image: &RgbaImage) -> RgbaImage {
         let g = pixel.0[1] as usize;
         let b = pixel.0[2] as usize;
 
-        // let err = (2 * r).abs_diff(b + g) + (2 * b).abs_diff(r + g) + (2 * g).abs_diff(r + b);
-
-        // if err <= 64 {
-        // out.put_pixel(x, y, pixel.clone());
-        // }
-
         if r + g + b >= 256 {
             out.put_pixel(x, y, pixel.clone());
         }
@@ -89,7 +86,7 @@ fn preprocess_image(image: &RgbaImage) -> RgbaImage {
 }
 
 fn is_digit_shape(shape: &Shape) -> bool {
-    (128..1024).contains(&shape.len())
+    (16..2048).contains(&shape.len())
 }
 
 fn identify_digits(
@@ -112,9 +109,9 @@ fn identify_digits(
         .iter()
         .filter_map(|shape| {
             let shape_image = shape.create_image(image);
-            let (character, score) = identifier.identify(&shape_image);
+            let character = identifier.identify(&shape_image)?;
 
-            (score >= 700000).then(|| IdentifiedCharacter {
+            Some(IdentifiedCharacter {
                 character,
                 shape: shape.clone(),
             })
@@ -293,7 +290,6 @@ fn process_image(
     image: &RgbaImage,
 ) -> Result<(), Box<dyn Error>> {
     let preprocessed = preprocess_image(&image);
-    preprocessed.save("preprocessed.png")?;
 
     let mut shapes = Shape::find_all(&preprocessed)
         .into_iter()
@@ -317,20 +313,20 @@ fn process_image(
         }
     });
 
-    // get_digit_example(&preprocessed, &shapes[0]).save("digits/9.png")?;
-    // get_digit_example(&preprocessed, &shapes[1]).save("digits/8.png")?;
-    // get_digit_example(&preprocessed, &shapes[2]).save("digits/7.png")?;
-    // get_digit_example(&preprocessed, &shapes[3]).save("digits/6.png")?;
-    // get_digit_example(&preprocessed, &shapes[4]).save("digits/5.png")?;
-    // get_digit_example(&preprocessed, &shapes[5]).save("digits/4.png")?;
-    // get_digit_example(&preprocessed, &shapes[6]).save("digits/3.png")?;
-    // get_digit_example(&preprocessed, &shapes[7]).save("digits/2.png")?;
-    // get_digit_example(&preprocessed, &shapes[8]).save("digits/1.png")?;
-    // get_digit_example(&preprocessed, &shapes[9]).save("digits/0.png")?;
-    // get_digit_example(&preprocessed, &shapes[10]).save("digits/slash.png")?;
+    // get_digit_example(&preprocessed, &shapes[1]).save("digits/9.png")?;
+    // get_digit_example(&preprocessed, &shapes[3]).save("digits/8.png")?;
+    // get_digit_example(&preprocessed, &shapes[4]).save("digits/7.png")?;
+    // get_digit_example(&preprocessed, &shapes[5]).save("digits/6.png")?;
+    // get_digit_example(&preprocessed, &shapes[7]).save("digits/5.png")?;
+    // get_digit_example(&preprocessed, &shapes[9]).save("digits/4.png")?;
+    // get_digit_example(&preprocessed, &shapes[11]).save("digits/3.png")?;
+    // get_digit_example(&preprocessed, &shapes[12]).save("digits/2.png")?;
+    // get_digit_example(&preprocessed, &shapes[13]).save("digits/1.png")?;
+    // get_digit_example(&preprocessed, &shapes[14]).save("digits/0.png")?;
+    // get_digit_example(&preprocessed, &shapes[11]).save("digits/slash.png")?;
 
-    // debug_comparison(&preprocessed, &shapes[1], &image::open("digits/slash.png")?)?
-    //     .save("compare1.png")?;
+    debug_comparison(&preprocessed, &shapes[5], &image::open("digits/6.png")?)?
+        .save("compare1.png")?;
 
     // debug_comparison(&preprocessed, &shapes[12], &image::open("digits/slash.png")?)?
     //     .save("compare2.png")?;
@@ -341,20 +337,23 @@ fn process_image(
     // debug_comparison(&preprocessed, &shapes[2], &image::open("digits/3.png")?)?
     //     .save("compare4.png")?;
 
-    let mut debug = ImageBuffer::new(preprocessed.width(), preprocessed.height());
+    let mut debug = ImageBuffer::new(preprocessed.width(), preprocessed.height() * 3);
+    debug.copy_from(&preprocessed, 0, 0)?;
 
     for (i, shape) in shapes.into_iter().enumerate() {
-        if is_digit_shape(&shape)
-            && identifier.identify(&shape.create_image(&preprocessed)).1 >= 700000
-        {
-            shape
-                .create_image(&preprocessed)
-                .save(format!("shapes/{i}.png"))?;
+        shape
+            .create_image(&preprocessed)
+            .save(format!("shapes/{i}.png"))?;
 
-            println!("{}", identifier.identify(&shape.create_image(image)).0);
+        let identified = identifier.identify(&shape.create_image(&preprocessed));
 
-            for &(x, y) in shape.all_pixels() {
-                debug.put_pixel(x, y, preprocessed.get_pixel(x, y).clone());
+        println!("{i}: {:?}", identified);
+
+        for &(x, y) in shape.all_pixels() {
+            debug.put_pixel(x, y + preprocessed.height(), preprocessed.get_pixel(x, y).clone());
+
+            if identified.is_some() {
+                debug.put_pixel(x, y + 2 * preprocessed.height(), preprocessed.get_pixel(x, y).clone());
             }
         }
     }

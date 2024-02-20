@@ -79,32 +79,42 @@ impl CharacterIdentifier {
         Ok(Self { characters: digits })
     }
 
-    pub fn identify(&self, image: &RgbaImage) -> (char, usize) {
-        let resized = resize(image, 32, 32, FilterType::Nearest);
+    pub fn identify(&self, image: &RgbaImage) -> Option<char> {
+        // let resized = resize(image, 32, 32, FilterType::Nearest);
 
-        let scores = self
-            .characters
-            .iter()
-            .map(|digit| (digit.0, self.score(&resized, &digit.1)))
-            .collect::<Vec<_>>();
+        // let scores = self
+        //     .characters
+        //     .iter()
+        //     .map(|digit| {
+        //         (
+        //             digit.0,
+        //             self.score(&image, &digit.1),
+        //             self.pixel_score(&image, &digit.1),
+        //             self.aspect_ratio_score(&image, &digit.1),
+        //         )
+        //     })
+        //     .collect::<Vec<_>>();
 
-        println!("{:?}", scores);
+        // println!("{:.2?}", scores);
 
         let best = self
             .characters
             .iter()
-            .map(|digit| (digit.0, self.score(&resized, &digit.1)))
-            .max_by_key(|&(_, score)| score)
+            .map(|digit| (digit.0, self.score(&image, &digit.1)))
+            .max_by(|a, b| f64::total_cmp(&a.1, &b.1))
             .unwrap();
 
-        println!("{:?}", best);
+        // let entry = self.characters.iter().find(|d| d.0 == best.0).unwrap();
+        // println!("{}: {:.2} * {:.2} = {:.2}", best.0, self.pixel_score(image, &entry.1), self.aspect_ratio_score(image, &entry.1), self.score(image, &entry.1));
 
-        best
+        (best.1 >= 0.5).then(|| best.0)
     }
 
-    fn score(&self, image: &RgbaImage, digit: &DynamicImage) -> usize {
-        // TODO: consider aspect ratio
+    fn score(&self, image: &RgbaImage, digit: &DynamicImage) -> f64 {
+        self.pixel_score(image, digit) * self.aspect_ratio_score(image, digit)
+    }
 
+    fn pixel_score(&self, image: &RgbaImage, digit: &DynamicImage) -> f64 {
         let image = resize(image, digit.width(), digit.height(), FilterType::Nearest);
 
         let count = image
@@ -117,6 +127,25 @@ impl CharacterIdentifier {
             .filter(|&(x, y, &pixel)| (pixel.0[3] > 0) && (digit.get_pixel(x, y).0[3] > 0))
             .count();
 
-        positive * 1000000 / count
+        positive as f64 / count as f64
+    }
+
+    fn aspect_ratio_score(&self, image: &RgbaImage, digit: &DynamicImage) -> f64 {
+        let aspect_ratio =
+            (image.width() * digit.height()) as f64 / (digit.width() * image.height()) as f64;
+
+        let aspect_ratio_score = ((aspect_ratio - 1.0).abs() + 1.0).powi(-2);
+
+        // println!(
+        //     "{} {} {} {} {} {}",
+        //     image.width(),
+        //     image.height(),
+        //     digit.width(),
+        //     digit.height(),
+        //     aspect_ratio,
+        //     aspect_ratio_score
+        // );
+
+        aspect_ratio_score
     }
 }
