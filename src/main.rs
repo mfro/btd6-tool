@@ -1,407 +1,369 @@
-use image::{
-    imageops::{crop_imm, resize}, DynamicImage, GenericImage, GenericImageView, ImageBuffer, Rgba, RgbaImage
-};
+#![allow(dead_code, unused_imports)]
+
 use std::{
-    cmp::Ordering,
     error::Error,
-    sync::Arc,
-    thread,
-    time::{Duration, Instant},
-};
-use windows_capture::{
-    capture::WindowsCaptureHandler,
-    frame::Frame,
-    graphics_capture_api::InternalCaptureControl,
-    settings::{ColorFormat, Settings},
-    window::Window,
+    fs::File,
+    io::Write,
+    mem::{size_of, size_of_val},
+    ptr::null,
+    thread::sleep,
+    time::Duration,
 };
 
-mod identify;
-mod shape;
-mod sync;
-pub use identify::CharacterIdentifier;
-pub use shape::Shape;
-pub use sync::ShareThing;
-struct State {
-    frame: ShareThing<RgbaImage>,
+use byteorder::{ByteOrder, LittleEndian, NativeEndian};
+
+use windows::{
+    core::{s, w, PCSTR},
+    Win32::{
+        Foundation::{CloseHandle, HANDLE, HMODULE, LPARAM, WPARAM},
+        System::{
+            Diagnostics::Debug::{Beep, ReadProcessMemory},
+            LibraryLoader::GetProcAddress,
+            Memory::{
+                VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_GUARD, PAGE_READWRITE,
+            },
+            ProcessStatus::{
+                EnumProcessModules, EnumProcesses, GetModuleBaseNameA, GetModuleFileNameExA,
+                GetModuleInformation, GetProcessImageFileNameA, MODULEINFO,
+            },
+            Threading::{
+                OpenProcess, PROCESS_ACCESS_RIGHTS, PROCESS_QUERY_INFORMATION,
+                PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+            },
+        },
+        UI::{
+            Input::KeyboardAndMouse::{
+                SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+                KEYEVENTF_KEYUP, VK_ESCAPE,
+            },
+            WindowsAndMessaging::{FindWindowA, SendMessageA, WM_KEYDOWN, WM_KEYUP},
+        },
+    },
+};
+
+mod ocr;
+
+type Result<T> = std::result::Result<T, Box<dyn Error>>;
+
+const TYPE_OFFSET_IN_GAME: u64 = 0x32d9b98;
+
+macro_rules! pointer_type {
+    ($ty:ident) => {
+        struct $ty(Pointer);
+
+        impl MemoryRead for $ty {
+            fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+                view.read(address).map($ty)
+            }
+        }
+    };
+}
+const TYPE_OFFSET_UNITY_TO_SIMULATION: u64 = 0x32e0ea0;
+const TYPE_OFFSET_SIMULATION: u64 = 0x333be00;
+
+trait MemoryRead: Sized {
+    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self>;
 }
 
-struct Capture {
-    state: Arc<State>,
+impl MemoryRead for f64 {
+    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+        let mut buffer = [0; 8];
+        view.read_exact(address, &mut buffer)?;
+
+        Ok(NativeEndian::read_f64(&buffer))
+    }
 }
 
-impl WindowsCaptureHandler for Capture {
-    type Flags = Arc<State>;
-    type Error = Box<dyn Error + Send + Sync>;
+impl MemoryRead for u64 {
+    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+        let mut buffer = [0; 8];
+        view.read_exact(address, &mut buffer)?;
 
-    fn new(state: Self::Flags) -> Result<Self, Self::Error> {
-        Ok(Capture { state })
+        Ok(NativeEndian::read_u64(&buffer))
+    }
+}
+
+impl MemoryRead for u32 {
+    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+        let mut buffer = [0; 4];
+        view.read_exact(address, &mut buffer)?;
+
+        Ok(NativeEndian::read_u32(&buffer))
+    }
+}
+
+impl MemoryRead for String {
+    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+        let address = view.read(address)?;
+
+        let mut buffer = vec![0; 1024];
+        view.read_exact(address, &mut buffer)?;
+
+        let len = buffer.iter().position(|&b| b == 0).unwrap();
+        let value = String::from_utf8(buffer[0..len].to_vec())?;
+
+        Ok(value)
+    }
+}
+
+struct Pointer {
+    memory: ProcessMemoryView,
+    address: u64,
+}
+
+impl Pointer {
+    pub fn read<T: MemoryRead>(&self, offset: u64) -> Result<T> {
+        self.memory.read(self.address + offset)
+    }
+}
+
+impl MemoryRead for Pointer {
+    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+        let address = view.read(address)?;
+
+        Ok(Self {
+            memory: view.clone(),
+            address,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ProcessMemoryView {
+    handle: HANDLE,
+}
+
+impl ProcessMemoryView {
+    pub fn read<T: MemoryRead>(&self, address: u64) -> Result<T> {
+        T::read(self, address)
     }
 
-    fn on_frame_arrived(
-        &mut self,
-        frame: &mut Frame,
-        control: InternalCaptureControl,
-    ) -> Result<(), Self::Error> {
-        let width = frame.width();
-        let height = frame.height();
+    pub fn read_bytes(&self, address: u64, out: &mut [u8]) -> Result<usize> {
+        let mut count = 0;
 
-        let mut buffer = frame.buffer()?;
-        let raw_buffer = buffer.as_raw_nopadding_buffer()?;
+        unsafe {
+            ReadProcessMemory(
+                self.handle,
+                address as _,
+                out.as_mut_ptr() as _,
+                out.len(),
+                Some(&mut count),
+            )?;
+        }
 
-        let image: RgbaImage = ImageBuffer::from_raw(width, height, raw_buffer.to_vec()).unwrap();
+        Ok(count)
+    }
 
-        self.state.frame.put(image);
+    pub fn read_exact(&self, address: u64, out: &mut [u8]) -> Result<()> {
+        let mut index = 0;
+
+        while index < out.len() {
+            index += self.read_bytes(address + index as u64, &mut out[index..])?;
+        }
 
         Ok(())
     }
 }
 
-#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
-struct IdentifiedCharacter {
-    shape: Shape,
-    character: char,
-}
-
-fn preprocess_image(image: &RgbaImage) -> RgbaImage {
-    let image = crop_imm(image, 100, 50, 1220, 40).to_image();
-
-    let t0 = Instant::now();
-    let mut out = ImageBuffer::new(image.width(), image.height());
-
-    for (x, y, pixel) in image.enumerate_pixels() {
-        let r = pixel.0[0] as usize;
-        let g = pixel.0[1] as usize;
-        let b = pixel.0[2] as usize;
-
-        if r + g + b >= 256 {
-            out.put_pixel(x, y, pixel.clone());
-        }
+pointer_type!(TypeInfo);
+impl TypeInfo {
+    pub fn get_name(&self) -> String {
+        self.0.read(0x10).unwrap()
     }
 
-    let t1 = Instant::now();
-    println!("filter greyscale {:?}", t1 - t0);
-
-    out
-}
-
-fn is_digit_shape(shape: &Shape) -> bool {
-    (16..2048).contains(&shape.len())
-}
-
-fn identify_digits(
-    identifier: &CharacterIdentifier,
-    image: &RgbaImage,
-) -> Result<Vec<IdentifiedCharacter>, Box<dyn Error>> {
-    let t0 = Instant::now();
-
-    let shapes: Vec<_> = Shape::find_all(image)
-        .into_iter()
-        .filter(|shape| is_digit_shape(shape))
-        .collect();
-
-    let t1 = Instant::now();
-    println!("find shapes {:?}", t1 - t0);
-
-    let t0 = Instant::now();
-
-    let identified = shapes
-        .iter()
-        .filter_map(|shape| {
-            let shape_image = shape.create_image(image);
-            let character = identifier.identify(&shape_image)?;
-
-            Some(IdentifiedCharacter {
-                character,
-                shape: shape.clone(),
-            })
-        })
-        .collect();
-
-    let t1 = Instant::now();
-    println!("identify digits {:?}", t1 - t0);
-
-    // let resized_shape_images: Vec<_> = shape_images
-    //     .iter()
-    //     .map(|image| resize(image, 32, 32, FilterType::Nearest))
-    //     .collect();
-
-    // resized_shape_images[0].save("digits/1.png")?;
-    // resized_shape_images[1].save("digits/2.png")?;
-    // resized_shape_images[2].save("digits/3.png")?;
-    // resized_shape_images[3].save("digits/4.png")?;
-    // resized_shape_images[4].save("digits/5.png")?;
-    // resized_shape_images[5].save("digits/6.png")?;
-    // resized_shape_images[6].save("digits/7.png")?;
-    // resized_shape_images[7].save("digits/8.png")?;
-    // resized_shape_images[8].save("digits/9.png")?;
-    // resized_shape_images[9].save("digits/0.png")?;
-
-    // for (i, shape_image) in shape_images.iter().enumerate() {
-    //     shape_image.save(format!("shapes/{i}.png"))?;
-
-    //     let digit = identifier.identify(shape_image);
-
-    //     println!("{:?}", digit);
-    // }
-
-    // for shape in shapes.iter() {
-    //     for &(x, y) in shape.all_pixels() {
-    //         step2.put_pixel(x, y, image.get_pixel(x, y).clone());
-    //     }
-    // }
-
-    // let t1 = Instant::now();
-    // println!("filter shape size {:?}", t1 - t0);
-
-    // Ok(step2)
-
-    Ok(identified)
-}
-
-fn is_line_break(a: &IdentifiedCharacter, b: &IdentifiedCharacter) -> bool {
-    let a = a.shape.bounds();
-    let b = b.shape.bounds();
-
-    (b.y).abs_diff(a.y) >= b.height
-}
-
-fn is_word_break(a: &IdentifiedCharacter, b: &IdentifiedCharacter) -> bool {
-    let a = a.shape.bounds();
-    let b = b.shape.bounds();
-
-    (b.x).abs_diff(a.x) >= b.width * 3
-}
-
-fn group_words(src: impl Iterator<Item = IdentifiedCharacter>) -> Vec<Vec<IdentifiedCharacter>> {
-    let mut words = vec![];
-    let mut previous: Option<IdentifiedCharacter> = None;
-
-    for ch in src {
-        let next_word = match previous {
-            Some(previous) => is_line_break(&previous, &ch) || is_word_break(&previous, &ch),
-            None => true,
-        };
-
-        previous = Some(ch.clone());
-
-        if next_word {
-            words.push(vec![]);
-        }
-
-        match words.last_mut() {
-            Some(word) => word.push(ch),
-            None => words.push(vec![ch]),
-        }
-    }
-
-    words
-}
-
-fn get_digit_example(image: &RgbaImage, shape: &Shape) -> RgbaImage {
-    let shape_image = shape.create_image(image);
-    // let shape_image = resize(&shape_image, 32, 32, image::imageops::FilterType::Nearest);
-
-    shape_image
-}
-
-fn main() -> Result<(), Box<dyn Error>> {
-    let image = image::open("0.png")?;
-    let identifier = CharacterIdentifier::load()?;
-
-    process_image(&identifier, &image.into_rgba8())?;
-
-    // let x = image::open("digits/0.png")?;
-    // let shapes = Shape::find_all(&x);
-
-    // let path = identify::contour(&shapes[0]);
-    // println!("{:?}", path);
-
-    // let state = Arc::new(State {
-    //     frame: Default::default(),
-    // });
-
-    // {
-    //     let state = state.clone();
-
-    //     thread::spawn(move || {
-    //         process_thread(&state.frame).unwrap();
-    //     });
-    // }
-
-    // let x = Window::from_name("BloonsTD6-Epic").unwrap();
-
-    // Capture::start(Settings {
-    //     item: x.try_into().unwrap(),
-    //     capture_cursor: Some(false),
-    //     draw_border: None,
-    //     color_format: ColorFormat::Rgba8,
-    //     flags: state.clone(),
-    // })
-    // .unwrap();
-
-    Ok(())
-}
-
-fn process_thread(src: &ShareThing<RgbaImage>) -> Result<(), Box<dyn Error>> {
-    let identifier = CharacterIdentifier::load()?;
-
-    loop {
-        let image = src.take();
-        image.save("0.png")?;
-
-        process_image(&identifier, &image)?;
-
-        thread::sleep(Duration::from_millis(500));
+    pub fn get_statics(&self) -> TypeStatics {
+        self.0.read(0xb8).unwrap()
     }
 }
 
-fn debug_comparison(
-    image: &RgbaImage,
-    shape: &Shape,
-    digit: &DynamicImage,
-) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>, Box<dyn Error>> {
-    let shape_image = shape.create_image(&image);
-
-    let b = resize(
-        &shape_image,
-        digit.width(),
-        digit.height(),
-        image::imageops::FilterType::Nearest,
-    );
-
-    let mut c = ImageBuffer::new(digit.width(), digit.height());
-
-    for (x, y, pixel) in digit.pixels() {
-        if pixel.0[3] > 0 && b.get_pixel(x, y).0[3] > 0 {
-            c.put_pixel(x, y, Rgba::from([0u8, 255, 0, 255]));
-        } else if pixel.0[3] > 0 {
-            c.put_pixel(x, y, Rgba::from([255, 0, 0, 255]));
-        } else if b.get_pixel(x, y).0[3] > 0 {
-            c.put_pixel(x, y, Rgba::from([0, 0, 255, 255]));
-        }
+pointer_type!(TypeStatics);
+impl TypeStatics {
+    pub fn field<T: MemoryRead>(&self, offset: u64) -> Result<T> {
+        self.0.read(offset)
     }
-
-    Ok(c)
 }
 
-fn process_image(
-    identifier: &CharacterIdentifier,
-    image: &RgbaImage,
-) -> Result<(), Box<dyn Error>> {
-    let preprocessed = preprocess_image(&image);
+pointer_type!(Object);
+impl Object {
+    pub fn get_type(&self) -> TypeInfo {
+        self.0.read(0x0).unwrap()
+    }
 
-    let mut shapes = Shape::find_all(&preprocessed)
-        .into_iter()
-        .filter(|shape| is_digit_shape(shape))
-        .collect::<Vec<_>>();
+    pub fn field<T: MemoryRead>(&self, offset: u64) -> Result<T> {
+        self.0.read(0x10 + offset)
+    }
+}
 
-    shapes.sort_by(|a, b| {
-        let a = a.bounds();
-        let b = b.bounds();
+fn enum_processes() -> Vec<u32> {
+    let mut processes = [0u32; 4096];
+    let mut needed = 0u32;
 
-        if a.y + a.height < b.y {
-            Ordering::Less
-        } else if b.y + b.height < a.y {
-            Ordering::Greater
-        } else if a.x + a.width < b.x {
-            Ordering::Less
-        } else if b.x + b.width < a.x {
-            Ordering::Greater
-        } else {
-            Ordering::Equal
-        }
-    });
+    unsafe {
+        EnumProcesses(
+            processes.as_mut_ptr(),
+            size_of_val(&processes) as u32,
+            &mut needed as _,
+        )
+        .unwrap();
 
-    // get_digit_example(&preprocessed, &shapes[1]).save("digits/9.png")?;
-    // get_digit_example(&preprocessed, &shapes[3]).save("digits/8.png")?;
-    // get_digit_example(&preprocessed, &shapes[4]).save("digits/7.png")?;
-    // get_digit_example(&preprocessed, &shapes[5]).save("digits/6.png")?;
-    // get_digit_example(&preprocessed, &shapes[7]).save("digits/5.png")?;
-    // get_digit_example(&preprocessed, &shapes[9]).save("digits/4.png")?;
-    // get_digit_example(&preprocessed, &shapes[11]).save("digits/3.png")?;
-    // get_digit_example(&preprocessed, &shapes[12]).save("digits/2.png")?;
-    // get_digit_example(&preprocessed, &shapes[13]).save("digits/1.png")?;
-    // get_digit_example(&preprocessed, &shapes[14]).save("digits/0.png")?;
-    // get_digit_example(&preprocessed, &shapes[11]).save("digits/slash.png")?;
+        processes[0..needed as usize / size_of::<u32>()].to_vec()
+    }
+}
 
-    debug_comparison(&preprocessed, &shapes[5], &image::open("digits/6.png")?)?
-        .save("compare1.png")?;
+struct Process {
+    handle: HANDLE,
+}
 
-    // debug_comparison(&preprocessed, &shapes[12], &image::open("digits/slash.png")?)?
-    //     .save("compare2.png")?;
+impl Process {
+    pub fn from_pid(pid: u32, access: PROCESS_ACCESS_RIGHTS) -> Result<Process> {
+        let handle = unsafe { OpenProcess(access, false, pid) }?;
 
-    // debug_comparison(&preprocessed, &shapes[2], &image::open("digits/1.png")?)?
-    //     .save("compare3.png")?;
+        Ok(Process { handle })
+    }
 
-    // debug_comparison(&preprocessed, &shapes[2], &image::open("digits/3.png")?)?
-    //     .save("compare4.png")?;
+    pub fn get_image_file_name(&self) -> Result<String> {
+        let mut name = [0u8; 1024];
+        let len = unsafe { GetProcessImageFileNameA(self.handle, &mut name) } as usize;
 
-    let mut debug = ImageBuffer::new(preprocessed.width(), preprocessed.height() * 3);
-    debug.copy_from(&preprocessed, 0, 0)?;
+        Ok(String::from_utf8(name[0..len].to_vec())?)
+    }
+}
 
-    for (i, shape) in shapes.into_iter().enumerate() {
-        shape
-            .create_image(&preprocessed)
-            .save(format!("shapes/{i}.png"))?;
+fn find_process() -> Result<Option<u32>> {
+    for pid in enum_processes() {
+        if let Ok(process) = Process::from_pid(pid, PROCESS_QUERY_LIMITED_INFORMATION) {
+            let file_name = process.get_image_file_name()?;
 
-        let identified = identifier.identify(&shape.create_image(&preprocessed));
-
-        println!("{i}: {:?}", identified);
-
-        for &(x, y) in shape.all_pixels() {
-            debug.put_pixel(x, y + preprocessed.height(), preprocessed.get_pixel(x, y).clone());
-
-            if identified.is_some() {
-                debug.put_pixel(x, y + 2 * preprocessed.height(), preprocessed.get_pixel(x, y).clone());
+            if file_name.ends_with("BloonsTD6.exe") {
+                return Ok(Some(pid));
             }
         }
     }
 
-    debug.save("debug.png")?;
+    Ok(None)
+}
 
-    let mut digits = identify_digits(&identifier, &preprocessed)?;
-    digits.sort_by(|a, b| {
-        let a = a.shape.bounds();
-        let b = b.shape.bounds();
+fn find_game_module(process: HANDLE) -> Result<u64> {
+    let mut modules = [HMODULE::default(); 1024];
+    let mut output = 0;
 
-        if a.y + a.height < b.y {
-            Ordering::Less
-        } else if b.y + b.height < a.y {
-            Ordering::Greater
-        } else if a.x + a.width < b.x {
-            Ordering::Less
-        } else if b.x + b.width < a.x {
-            Ordering::Greater
-        } else {
-            Ordering::Equal
+    unsafe {
+        EnumProcessModules(
+            process,
+            modules.as_mut_ptr() as _,
+            size_of_val(&modules) as u32,
+            &mut output,
+        )?;
+    }
+
+    let modules = &modules[..output as usize / size_of::<HMODULE>()];
+
+    for module in modules.iter() {
+        let mut file_name = [0u8; 1024];
+        let len = unsafe { GetModuleBaseNameA(process, *module, &mut file_name) } as usize;
+
+        let string = String::from_utf8(file_name[0..len].to_vec()).unwrap();
+
+        if string == "GameAssembly.dll" {
+            let mut info = MODULEINFO::default();
+
+            unsafe {
+                GetModuleInformation(process, *module, &mut info, size_of_val(&info) as u32)?;
+            }
+
+            return Ok(info.lpBaseOfDll as u64);
         }
-    });
-
-    for digit in digits.iter() {
-        println!("{}", digit.character);
     }
 
-    let words = group_words(digits.into_iter())
-        .into_iter()
-        .map(|word| word.iter().map(|ch| ch.character).collect::<String>())
-        .collect::<Vec<_>>();
+    Err("module not found".into())
+}
 
-    println!("{:?}", words);
+fn main() -> Result<()> {
+    let pid = find_process()?.unwrap();
 
-    if words.len() >= 3 {
-        let lives: usize = words[0].parse()?;
-        let money: usize = words[1].parse()?;
-        let round_info = words[words.len() - 1].split('/').collect::<Vec<_>>();
+    unsafe {
+        let access = PROCESS_QUERY_INFORMATION | PROCESS_VM_READ;
 
-        let current_round: usize = round_info[0].parse()?;
-        let total_rounds: Option<usize> = round_info.get(1).map(|s| s.parse()).transpose()?;
+        let process = OpenProcess(access, false, pid).unwrap();
+        let module_base = find_game_module(process)?;
 
-        println!(
-            "lives: {}  money: {}  round: {}",
-            lives, money, current_round
-        );
+        let view = ProcessMemoryView { handle: process };
+        let ingame_type: TypeInfo = view.read(module_base + TYPE_OFFSET_IN_GAME)?;
+
+        // Assets_Scripts_Unity_UI_New_InGame_InGame_o
+        let ingame: Object = ingame_type.get_statics().field(0x0)?;
+        if ingame.0.address == 0 {
+            println!("not in game");
+        } else {
+            assert_eq!("InGame", ingame.get_type().get_name());
+
+            // Assets_Scripts_Unity_Bridge_UnityToSimulation_o
+            let bridge: Object = ingame.field(0xb8)?;
+            assert_eq!("UnityToSimulation", bridge.get_type().get_name());
+
+            // Assets_Scripts_Simulation_Simulation_o
+            let simulation: Object = bridge.field(0x18)?;
+            assert_eq!("Simulation", simulation.get_type().get_name());
+
+            // Assets_Scripts_Simulation_Simulation_o
+            let map: Object = simulation.field(0x398)?;
+            assert_eq!("Map", map.get_type().get_name());
+
+            // Assets_Scripts_Simulation_Track_Map_o
+            let spawner: Object = map.field(0x88)?;
+            assert_eq!("Spawner", spawner.get_type().get_name());
+
+            // Assets_Scripts_Utils_KonFuze_NoShuffle_o
+            let rounds: Object = spawner.field(0xd8)?;
+            assert_eq!("KonFuze_NoShuffle", rounds.get_type().get_name());
+
+            // System_Collections_Generic_Dictionary_TKey__TValue__o
+            let cash_managers: Object = simulation.field(0x378)?;
+            assert_eq!("Dictionary`2", cash_managers.get_type().get_name());
+
+            // System_Collections_Generic_Dictionary_Entry_TKey__TValue__array
+            let cash_manager_entries: Object = cash_managers.field(0x8)?;
+            assert_eq!("Entry[]", cash_manager_entries.get_type().get_name());
+
+            // Assets_Scripts_Simulation_Simulation_CashManager_o
+            let cash_manager: Object = cash_manager_entries.field(0x20)?;
+            assert_eq!("CashManager", cash_manager.get_type().get_name());
+
+            // Assets_Scripts_Utils_KonFuze_NoShuffle_o
+            let cash: Object = cash_manager.field(0x0)?;
+            assert_eq!("KonFuze", cash.get_type().get_name());
+
+            loop {
+                let round: f64 = rounds.field(0x18)?;
+                let round = round as u64 + 1;
+
+                let cash: f64 = cash.field(0x18)?;
+                let cash = cash as u64 + 1;
+
+                println!("cash: {} round: {}", cash, round);
+
+                let input = std::env::args().nth(1).unwrap();
+
+                let stop = if input.starts_with("$") {
+                    let target = input[1..].parse()?;
+                    cash >= target
+                } else {
+                    let target = input.parse()?;
+                    round >= target
+                };
+
+                if !stop {
+                    sleep(Duration::from_millis(1000));
+                } else {
+                    Beep(500, 200)?;
+                    sleep(Duration::from_millis(100));
+                    Beep(500, 200)?;
+
+                    break;
+                }
+            }
+        }
+
+        Ok(())
     }
-
-    Ok(())
 }
