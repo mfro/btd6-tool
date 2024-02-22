@@ -1,220 +1,53 @@
-#![allow(dead_code, unused_imports)]
-
 use std::{
     error::Error,
-    fs::File,
-    io::Write,
     mem::{size_of, size_of_val},
-    ptr::null,
     thread::sleep,
     time::Duration,
 };
 
-use byteorder::{ByteOrder, LittleEndian, NativeEndian};
-
-use windows::{
-    core::{s, w, PCSTR},
-    Win32::{
-        Foundation::{CloseHandle, HANDLE, HMODULE, LPARAM, WPARAM},
-        System::{
-            Diagnostics::Debug::{Beep, ReadProcessMemory},
-            LibraryLoader::GetProcAddress,
-            Memory::{
-                VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_GUARD, PAGE_READWRITE,
-            },
-            ProcessStatus::{
-                EnumProcessModules, EnumProcesses, GetModuleBaseNameA, GetModuleFileNameExA,
-                GetModuleInformation, GetProcessImageFileNameA, MODULEINFO,
-            },
-            Threading::{
-                OpenProcess, PROCESS_ACCESS_RIGHTS, PROCESS_QUERY_INFORMATION,
-                PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
-            },
+use memory::{Object, ProcessMemoryView, TypeInfo};
+use windows::Win32::{
+    Foundation::{HANDLE, HMODULE},
+    System::{
+        Diagnostics::Debug::Beep,
+        ProcessStatus::{
+            EnumProcessModules, EnumProcesses, GetModuleBaseNameA, GetModuleInformation,
+            GetProcessImageFileNameA, MODULEINFO,
         },
-        UI::{
-            Input::KeyboardAndMouse::{
-                SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-                KEYEVENTF_KEYUP, VK_ESCAPE,
-            },
-            WindowsAndMessaging::{FindWindowA, SendMessageA, WM_KEYDOWN, WM_KEYUP},
+        Threading::{
+            OpenProcess, PROCESS_ACCESS_RIGHTS, PROCESS_QUERY_INFORMATION,
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
         },
     },
 };
 
-mod ocr;
+mod memory;
 
-type Result<T> = std::result::Result<T, Box<dyn Error>>;
+pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 const TYPE_OFFSET_IN_GAME: u64 = 0x32d9b98;
-
-macro_rules! pointer_type {
-    ($ty:ident) => {
-        struct $ty(Pointer);
-
-        impl MemoryRead for $ty {
-            fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
-                view.read(address).map($ty)
-            }
-        }
-    };
-}
-const TYPE_OFFSET_UNITY_TO_SIMULATION: u64 = 0x32e0ea0;
-const TYPE_OFFSET_SIMULATION: u64 = 0x333be00;
-
-trait MemoryRead: Sized {
-    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self>;
-}
-
-impl MemoryRead for f64 {
-    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
-        let mut buffer = [0; 8];
-        view.read_exact(address, &mut buffer)?;
-
-        Ok(NativeEndian::read_f64(&buffer))
-    }
-}
-
-impl MemoryRead for u64 {
-    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
-        let mut buffer = [0; 8];
-        view.read_exact(address, &mut buffer)?;
-
-        Ok(NativeEndian::read_u64(&buffer))
-    }
-}
-
-impl MemoryRead for u32 {
-    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
-        let mut buffer = [0; 4];
-        view.read_exact(address, &mut buffer)?;
-
-        Ok(NativeEndian::read_u32(&buffer))
-    }
-}
-
-impl MemoryRead for String {
-    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
-        let address = view.read(address)?;
-
-        let mut buffer = vec![0; 1024];
-        view.read_exact(address, &mut buffer)?;
-
-        let len = buffer.iter().position(|&b| b == 0).unwrap();
-        let value = String::from_utf8(buffer[0..len].to_vec())?;
-
-        Ok(value)
-    }
-}
-
-struct Pointer {
-    memory: ProcessMemoryView,
-    address: u64,
-}
-
-impl Pointer {
-    pub fn read<T: MemoryRead>(&self, offset: u64) -> Result<T> {
-        self.memory.read(self.address + offset)
-    }
-}
-
-impl MemoryRead for Pointer {
-    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
-        let address = view.read(address)?;
-
-        Ok(Self {
-            memory: view.clone(),
-            address,
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct ProcessMemoryView {
-    handle: HANDLE,
-}
-
-impl ProcessMemoryView {
-    pub fn read<T: MemoryRead>(&self, address: u64) -> Result<T> {
-        T::read(self, address)
-    }
-
-    pub fn read_bytes(&self, address: u64, out: &mut [u8]) -> Result<usize> {
-        let mut count = 0;
-
-        unsafe {
-            ReadProcessMemory(
-                self.handle,
-                address as _,
-                out.as_mut_ptr() as _,
-                out.len(),
-                Some(&mut count),
-            )?;
-        }
-
-        Ok(count)
-    }
-
-    pub fn read_exact(&self, address: u64, out: &mut [u8]) -> Result<()> {
-        let mut index = 0;
-
-        while index < out.len() {
-            index += self.read_bytes(address + index as u64, &mut out[index..])?;
-        }
-
-        Ok(())
-    }
-}
-
-pointer_type!(TypeInfo);
-impl TypeInfo {
-    pub fn get_name(&self) -> String {
-        self.0.read(0x10).unwrap()
-    }
-
-    pub fn get_statics(&self) -> TypeStatics {
-        self.0.read(0xb8).unwrap()
-    }
-}
-
-pointer_type!(TypeStatics);
-impl TypeStatics {
-    pub fn field<T: MemoryRead>(&self, offset: u64) -> Result<T> {
-        self.0.read(offset)
-    }
-}
-
-pointer_type!(Object);
-impl Object {
-    pub fn get_type(&self) -> TypeInfo {
-        self.0.read(0x0).unwrap()
-    }
-
-    pub fn field<T: MemoryRead>(&self, offset: u64) -> Result<T> {
-        self.0.read(0x10 + offset)
-    }
-}
-
-fn enum_processes() -> Vec<u32> {
-    let mut processes = [0u32; 4096];
-    let mut needed = 0u32;
-
-    unsafe {
-        EnumProcesses(
-            processes.as_mut_ptr(),
-            size_of_val(&processes) as u32,
-            &mut needed as _,
-        )
-        .unwrap();
-
-        processes[0..needed as usize / size_of::<u32>()].to_vec()
-    }
-}
 
 struct Process {
     handle: HANDLE,
 }
 
 impl Process {
+    pub fn enum_process_ids() -> Vec<u32> {
+        let mut processes = [0u32; 4096];
+        let mut needed = 0u32;
+
+        unsafe {
+            EnumProcesses(
+                processes.as_mut_ptr(),
+                size_of_val(&processes) as u32,
+                &mut needed as _,
+            )
+            .expect("EnumProcesses");
+
+            processes[0..needed as usize / size_of::<u32>()].to_vec()
+        }
+    }
+
     pub fn from_pid(pid: u32, access: PROCESS_ACCESS_RIGHTS) -> Result<Process> {
         let handle = unsafe { OpenProcess(access, false, pid) }?;
 
@@ -229,21 +62,21 @@ impl Process {
     }
 }
 
-fn find_process() -> Result<Option<u32>> {
-    for pid in enum_processes() {
+fn find_bloons_pid() -> Result<u32> {
+    for pid in Process::enum_process_ids() {
         if let Ok(process) = Process::from_pid(pid, PROCESS_QUERY_LIMITED_INFORMATION) {
             let file_name = process.get_image_file_name()?;
 
             if file_name.ends_with("BloonsTD6.exe") {
-                return Ok(Some(pid));
+                return Ok(pid);
             }
         }
     }
 
-    Ok(None)
+    Err("bloons process not found".into())
 }
 
-fn find_game_module(process: HANDLE) -> Result<u64> {
+fn find_bloons_game_module(process: HANDLE) -> Result<u64> {
     let mut modules = [HMODULE::default(); 1024];
     let mut output = 0;
 
@@ -262,7 +95,8 @@ fn find_game_module(process: HANDLE) -> Result<u64> {
         let mut file_name = [0u8; 1024];
         let len = unsafe { GetModuleBaseNameA(process, *module, &mut file_name) } as usize;
 
-        let string = String::from_utf8(file_name[0..len].to_vec()).unwrap();
+        let string = String::from_utf8(file_name[0..len].to_vec())
+            .expect("GetModuleBaseNameA invalid string");
 
         if string == "GameAssembly.dll" {
             let mut info = MODULEINFO::default();
@@ -278,17 +112,37 @@ fn find_game_module(process: HANDLE) -> Result<u64> {
     Err("module not found".into())
 }
 
+enum OperationMode {
+    Cash(u64),
+    Round(u64),
+}
+
 fn main() -> Result<()> {
-    let pid = find_process()?.unwrap();
+    let input = std::env::args()
+        .nth(1)
+        .expect("Specify cash or round value");
+
+    let mode = if input.starts_with("$") {
+        let target = input[1..].parse()?;
+        println!("waiting for cash: ${}", target);
+        OperationMode::Cash(target)
+    } else {
+        let target = input.parse()?;
+        println!("waiting for round: {}", target);
+        OperationMode::Round(target)
+    };
+
+    let pid = find_bloons_pid()?;
 
     unsafe {
         let access = PROCESS_QUERY_INFORMATION | PROCESS_VM_READ;
+        let process = OpenProcess(access, false, pid).expect("OpenProcess");
 
-        let process = OpenProcess(access, false, pid).unwrap();
-        let module_base = find_game_module(process)?;
+        let module_base = find_bloons_game_module(process)?;
 
-        let view = ProcessMemoryView { handle: process };
-        let ingame_type: TypeInfo = view.read(module_base + TYPE_OFFSET_IN_GAME)?;
+        let memory_view = ProcessMemoryView::new(process);
+
+        let ingame_type: TypeInfo = memory_view.read(module_base + TYPE_OFFSET_IN_GAME)?;
 
         // Assets_Scripts_Unity_UI_New_InGame_InGame_o
         let ingame: Object = ingame_type.get_statics().field(0x0)?;
@@ -342,14 +196,9 @@ fn main() -> Result<()> {
 
                 println!("cash: {} round: {}", cash, round);
 
-                let input = std::env::args().nth(1).unwrap();
-
-                let stop = if input.starts_with("$") {
-                    let target = input[1..].parse()?;
-                    cash >= target
-                } else {
-                    let target = input.parse()?;
-                    round >= target
+                let stop = match mode {
+                    OperationMode::Cash(target) => cash >= target,
+                    OperationMode::Round(target) => round >= target,
                 };
 
                 if !stop {
