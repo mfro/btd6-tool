@@ -56,12 +56,11 @@ fn main() -> Result<()> {
         if let Some(ingame) = ingame {
             let simulation = ingame.unity_to_simulation().simulation();
 
-            simulation.tower_manager().tower_history();
-            simulation.tower_manager().towers();
-
             let health = simulation.health().get() as u64;
             let round = simulation.map().spawner().round().get() as u64 + 1;
             let cash = simulation.cash_manager().cash().get() as u64;
+
+            simulation.map().towers();
 
             println!("health: {health} cash: {cash} round: {round} / {condition:?}");
 

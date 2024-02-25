@@ -47,6 +47,8 @@ impl Simulation {
             let cash_managers: Object = self.field(0x378).unwrap();
             assert_eq!("Dictionary`2", cash_managers.get_type().get_name());
 
+            assert_eq!(1, cash_managers.field::<u32>(0x10).unwrap());
+
             // System_Collections_Generic_Dictionary_Entry_TKey__TValue__array
             let cash_manager_entries: Object = cash_managers.field(0x8).unwrap();
             assert_eq!("Entry[]", cash_manager_entries.get_type().get_name());
@@ -99,6 +101,30 @@ impl TowerManager {
 object_type!(Map);
 impl Map {
     field!(@0x0088 spawner: Spawner);
+
+    pub fn towers(&self) {
+        unsafe {
+            let dictionary: Object = self.field(0x0098).unwrap();
+            assert_eq!("Dictionary`2", dictionary.get_type().get_name());
+
+            assert_eq!(1, dictionary.field::<u32>(0x10).unwrap());
+
+            let entries: Object = dictionary.field(0x8).unwrap();
+            assert_eq!("Entry[]", entries.get_type().get_name());
+
+            // Assets_Scripts_Simulation_Simulation_CashManager_o
+            let list: Object = entries.field(0x20).unwrap();
+            assert_eq!("List`1", list.get_type().get_name());
+
+            let len: u32 = list.field(0x0008).unwrap();
+            println!("{}", len);
+
+            let array: Object = list.field(0x0000).unwrap();
+            println!("{:?}", array.get_type().get_name());
+
+
+        }
+    }
 }
 
 object_type!(CashManager);
