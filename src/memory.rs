@@ -1,13 +1,12 @@
 use byteorder::{ByteOrder, NativeEndian};
-use windows::Win32::{Foundation::HANDLE, System::Diagnostics::Debug::ReadProcessMemory};
 
-use crate::Result;
+use crate::{Process, Result};
 
 macro_rules! pointer_type {
     ($ty:ident) => {
         pub struct $ty(pub Pointer);
 
-        impl MemoryRead for $ty {
+        impl crate::memory::MemoryRead for $ty {
             fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
                 view.read(address).map($ty)
             }
@@ -15,34 +14,57 @@ macro_rules! pointer_type {
     };
 }
 
-#[derive(Clone, Copy, Debug)]
+macro_rules! object_type {
+    ($ty:ident) => {
+        pub struct $ty(pub crate::memory::Pointer);
+
+        impl crate::memory::MemoryRead for $ty {
+            fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+                view.read(address).map($ty::from_pointer)
+            }
+        }
+
+        impl crate::memory::MemoryRead for Option<$ty> {
+            fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+                let pointer: crate::memory::Pointer = view.read(address)?;
+                Ok((pointer.address != 0).then(|| $ty::from_pointer(pointer)))
+            }
+        }
+
+        impl crate::memory::ObjectPointer for $ty {
+            fn from_pointer(pointer: crate::memory::Pointer) -> Self {
+                let value = Self(pointer);
+
+                assert_eq!(stringify!($ty), value.get_type().get_name());
+
+                value
+            }
+
+            fn pointer(&self) -> &crate::memory::Pointer {
+                &self.0
+            }
+        }
+    };
+}
+
+pub(crate) use object_type;
+
+#[derive(Debug, Clone, Copy)]
 pub struct ProcessMemoryView {
-    handle: HANDLE,
+    process: Process,
 }
 
 impl ProcessMemoryView {
-    pub fn new(handle: HANDLE) -> Self {
-        Self { handle }
+    pub fn new(process: Process) -> Self {
+        Self { process }
     }
 
     pub fn read<T: MemoryRead>(&self, address: u64) -> Result<T> {
         T::read(self, address)
     }
 
-    pub fn read_bytes(&self, address: u64, out: &mut [u8]) -> Result<usize> {
-        let mut count = 0;
-
-        unsafe {
-            ReadProcessMemory(
-                self.handle,
-                address as _,
-                out.as_mut_ptr() as _,
-                out.len(),
-                Some(&mut count),
-            )?;
-        }
-
-        Ok(count)
+    pub fn read_bytes(&self, address: u64, buffer: &mut [u8]) -> Result<usize> {
+        self.process.read_memory(address, buffer)
     }
 
     pub fn read_exact(&self, address: u64, out: &mut [u8]) -> Result<()> {
@@ -142,12 +164,25 @@ impl TypeStatics {
 }
 
 pointer_type!(Object);
-impl Object {
-    pub fn get_type(&self) -> TypeInfo {
-        self.0.read(0x0).unwrap()
+impl ObjectPointer for Object {
+    fn from_pointer(pointer: Pointer) -> Self {
+        Object(pointer)
     }
 
-    pub fn field<T: MemoryRead>(&self, offset: u64) -> Result<T> {
-        self.0.read(0x10 + offset)
+    fn pointer(&self) -> &Pointer {
+        &self.0
+    }
+}
+
+pub trait ObjectPointer {
+    fn from_pointer(pointer: Pointer) -> Self;
+    fn pointer(&self) -> &Pointer;
+
+    fn get_type(&self) -> TypeInfo {
+        self.pointer().read(0x0).unwrap()
+    }
+
+    unsafe fn field<T: MemoryRead>(&self, offset: u64) -> Result<T> {
+        self.pointer().read(0x10 + offset)
     }
 }
