@@ -38,6 +38,7 @@ impl UnityToSimulation {
 // Assets_Scripts_Simulation_Simulation_o
 object_type!(Simulation);
 impl Simulation {
+    field!(@0x0050 tower_manager: TowerManager);
     field!(@0x0398 map: Map);
     field!(@0x0390 health: KonFuze);
 
@@ -54,6 +55,42 @@ impl Simulation {
             let cash_manager = cash_manager_entries.field(0x20).unwrap();
 
             cash_manager
+        }
+    }
+}
+
+object_type!(TowerManager);
+impl TowerManager {
+    pub fn tower_history(&self) {
+        unsafe {
+            let list: Object = self.field(0x0090).unwrap();
+            assert_eq!("List`1", list.get_type().get_name());
+
+            let len: u32 = list.field(0x0008).unwrap();
+            println!("{}", len);
+
+            let array: Object = list.field(0x0000).unwrap();
+            println!("{:?}", array.get_type().get_name());
+
+            let x: Object = array.field(0x10).unwrap();
+            println!("{:?}", x.get_type().get_name());
+        }
+    }
+
+    pub fn towers(&self) {
+        unsafe {
+            let list: Object = self.field(0x00c0).unwrap();
+            assert_eq!("List`1", list.get_type().get_name());
+
+            let len: u32 = list.field(0x0008).unwrap();
+            println!("{}", len);
+
+            let array: Object = list.field(0x0000).unwrap();
+            println!("{:?}", array.get_type().get_name());
+
+            // let x: Object = array.field(0x10).unwrap();
+            // println!("{:?}", x.get_type().get_name());
+            // println!("{:?}", x.get_type().get_name());
         }
     }
 }

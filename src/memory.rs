@@ -4,6 +4,7 @@ use crate::{Process, Result};
 
 macro_rules! pointer_type {
     ($ty:ident) => {
+        #[derive(Debug, Clone)]
         pub struct $ty(pub Pointer);
 
         impl crate::memory::MemoryRead for $ty {
@@ -16,6 +17,7 @@ macro_rules! pointer_type {
 
 macro_rules! object_type {
     ($ty:ident) => {
+        #[derive(Debug, Clone)]
         pub struct $ty(pub crate::memory::Pointer);
 
         impl crate::memory::MemoryRead for $ty {
@@ -123,6 +125,7 @@ impl MemoryRead for String {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Pointer {
     pub memory: ProcessMemoryView,
     pub address: u64,
