@@ -2,14 +2,37 @@ use byteorder::{ByteOrder, NativeEndian};
 
 use crate::{Process, Result};
 
+macro_rules! count {
+    () => (0usize);
+    ( $x:tt $($xs:tt)* ) => (1usize + crate::memory::count!($($xs)*));
+}
+
 macro_rules! pointer_type {
     ($ty:ident) => {
         #[derive(Debug, Clone)]
         pub struct $ty(pub Pointer);
 
         impl crate::memory::MemoryRead for $ty {
+            const SIZE: usize = 8;
+
             fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
-                view.read(address).map($ty)
+                match view.read::<Option<$ty>>(address)? {
+                    Some(v) => Ok(v),
+                    None => Err(format!("expected {}", stringify!($ty)).into()),
+                }
+            }
+        }
+
+        impl crate::memory::MemoryRead for Option<$ty> {
+            const SIZE: usize = 8;
+
+            fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+                let value: Pointer = view.read(address)?;
+                if value.address == 0 {
+                    Ok(None)
+                } else {
+                    Ok(Some($ty(value)))
+                }
             }
         }
     };
@@ -17,38 +40,104 @@ macro_rules! pointer_type {
 
 macro_rules! object_type {
     ($ty:ident) => {
-        #[derive(Debug, Clone)]
-        pub struct $ty(pub crate::memory::Pointer);
+        object_type!($ty<> ; stringify!($ty));
+    };
 
-        impl crate::memory::MemoryRead for $ty {
-            fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
-                view.read(address).map($ty::from_pointer)
+    ($ty:ident ; $name:expr) => {
+        object_type!($ty<> ; $name);
+    };
+
+    ($ty:ident<$( $generic:ident ),*>) => {
+        object_type!($ty<$( $generic ),*> ; stringify!($ty));
+    };
+
+    ($ty:ident<$( $generic:ident ),*> ; $name:expr) => {
+        #[derive(Debug)]
+        #[allow(unused_parens)]
+        pub struct $ty<$( $generic: MemoryRead ),*>(pub crate::memory::Pointer, std::marker::PhantomData<($( $generic ),*)>);
+
+        impl<$( $generic: MemoryRead ),*> Clone for $ty<$( $generic ),*> {
+            fn clone(&self) -> Self {
+                Self(self.0.clone(), std::default::Default::default())
             }
         }
 
-        impl crate::memory::MemoryRead for Option<$ty> {
+        impl<$( $generic: MemoryRead ),*> crate::memory::MemoryRead for $ty<$( $generic ),*> {
+            const SIZE: usize = 8;
+
+            fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+                view.read::<Pointer>(address).and_then($ty::try_from)
+            }
+        }
+
+        impl<$( $generic: MemoryRead ),*> crate::memory::MemoryRead for Option<$ty<$( $generic ),*>> {
+            const SIZE: usize = 8;
+
             fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
                 let pointer: crate::memory::Pointer = view.read(address)?;
-                Ok((pointer.address != 0).then(|| $ty::from_pointer(pointer)))
+                (pointer.address != 0).then(|| $ty::try_from(pointer)).transpose()
             }
         }
 
-        impl crate::memory::ObjectPointer for $ty {
-            fn from_pointer(pointer: crate::memory::Pointer) -> Self {
-                let value = Self(pointer);
-
-                assert_eq!(stringify!($ty), value.get_type().get_name());
-
-                value
+        impl<$( $generic: MemoryRead ),*> From<$ty<$( $generic ),*>> for Object {
+            fn from(value: $ty<$( $generic ),*>) -> Object {
+                Object(value.0)
             }
+        }
 
-            fn pointer(&self) -> &crate::memory::Pointer {
+        impl<$( $generic: MemoryRead ),*> From<$ty<$( $generic ),*>> for Pointer {
+            fn from(value: $ty<$( $generic ),*>) -> Pointer {
+                value.0
+            }
+        }
+
+        impl<$( $generic: MemoryRead ),*> TryFrom<Pointer> for $ty<$( $generic ),*> {
+            type Error = Box<dyn std::error::Error>;
+
+            fn try_from(value: Pointer) -> Result<Self> {
+                let expected_type_name = match crate::memory::count!( $( $generic )* ) {
+                    0 => $name.to_string(),
+                    _ => format!("{}`{}", $name, crate::memory::count!( $( $generic )* )),
+                };
+
+                if value.address == 0 {
+                    return Err(format!("Expected {} got null", expected_type_name).into());
+                }
+
+                let value = Self(value, std::default::Default::default());
+
+                let correct =
+                if $name == "Array" {
+                    // todo gross array type checking
+                    value.get_type()?.get_name()?.ends_with("[]")
+                } else {
+                    value.get_type()?.get_name()? == expected_type_name
+                };
+
+                if !correct {
+                    return Err(format!(
+                        "Expected {} got {}",
+                        expected_type_name,
+                        value.get_type()?.get_name()?
+                    )
+                    .into());
+                }
+
+                Ok(value)
+            }
+        }
+
+        impl<$( $generic: MemoryRead ),*> AsRef<Pointer> for $ty<$( $generic ),*> {
+            fn as_ref(&self) -> &Pointer {
                 &self.0
             }
         }
+
+        impl<$( $generic: MemoryRead ),*> crate::memory::ObjectPointer for $ty<$( $generic ),*> { }
     };
 }
 
+pub(crate) use count;
 pub(crate) use object_type;
 
 #[derive(Debug, Clone, Copy)]
@@ -81,10 +170,33 @@ impl ProcessMemoryView {
 }
 
 pub trait MemoryRead: Sized {
+    const SIZE: usize;
     fn read(view: &ProcessMemoryView, address: u64) -> Result<Self>;
 }
 
+impl MemoryRead for bool {
+    const SIZE: usize = 1;
+
+    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+        let mut buffer = [0; 1];
+        view.read_exact(address, &mut buffer)?;
+
+        Ok(buffer[0] != 0)
+    }
+}
+
+impl MemoryRead for f32 {
+    const SIZE: usize = 4;
+    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+        let mut buffer = [0; 4];
+        view.read_exact(address, &mut buffer)?;
+
+        Ok(NativeEndian::read_f32(&buffer))
+    }
+}
+
 impl MemoryRead for f64 {
+    const SIZE: usize = 7;
     fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
         let mut buffer = [0; 8];
         view.read_exact(address, &mut buffer)?;
@@ -94,6 +206,7 @@ impl MemoryRead for f64 {
 }
 
 impl MemoryRead for u64 {
+    const SIZE: usize = 8;
     fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
         let mut buffer = [0; 8];
         view.read_exact(address, &mut buffer)?;
@@ -103,6 +216,7 @@ impl MemoryRead for u64 {
 }
 
 impl MemoryRead for u32 {
+    const SIZE: usize = 4;
     fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
         let mut buffer = [0; 4];
         view.read_exact(address, &mut buffer)?;
@@ -111,14 +225,39 @@ impl MemoryRead for u32 {
     }
 }
 
+impl MemoryRead for i64 {
+    const SIZE: usize = 8;
+    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+        let mut buffer = [0; 8];
+        view.read_exact(address, &mut buffer)?;
+
+        Ok(NativeEndian::read_i64(&buffer))
+    }
+}
+
+impl MemoryRead for i32 {
+    const SIZE: usize = 4;
+    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+        let mut buffer = [0; 4];
+        view.read_exact(address, &mut buffer)?;
+
+        Ok(NativeEndian::read_i32(&buffer))
+    }
+}
+
 impl MemoryRead for String {
+    const SIZE: usize = 8;
     fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
         let address = view.read(address)?;
 
         let mut buffer = vec![0; 1024];
         view.read_exact(address, &mut buffer)?;
 
-        let len = buffer.iter().position(|&b| b == 0).unwrap();
+        let len = buffer
+            .iter()
+            .position(|&b| b == 0)
+            .expect("no null terminator");
+
         let value = String::from_utf8(buffer[0..len].to_vec())?;
 
         Ok(value)
@@ -138,6 +277,7 @@ impl Pointer {
 }
 
 impl MemoryRead for Pointer {
+    const SIZE: usize = 8;
     fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
         let address = view.read(address)?;
 
@@ -150,12 +290,12 @@ impl MemoryRead for Pointer {
 
 pointer_type!(TypeInfo);
 impl TypeInfo {
-    pub fn get_name(&self) -> String {
-        self.0.read(0x10).unwrap()
+    pub fn get_name(&self) -> Result<String> {
+        self.0.read(0x10)
     }
 
-    pub fn get_statics(&self) -> TypeStatics {
-        self.0.read(0xb8).unwrap()
+    pub fn get_statics(&self) -> Result<TypeStatics> {
+        self.0.read(0xb8)
     }
 }
 
@@ -167,25 +307,30 @@ impl TypeStatics {
 }
 
 pointer_type!(Object);
-impl ObjectPointer for Object {
-    fn from_pointer(pointer: Pointer) -> Self {
-        Object(pointer)
-    }
+impl TryFrom<Pointer> for Object {
+    type Error = Box<dyn std::error::Error>;
 
-    fn pointer(&self) -> &Pointer {
+    fn try_from(value: Pointer) -> Result<Self> {
+        Ok(Self(value))
+    }
+}
+
+impl AsRef<Pointer> for Object {
+    fn as_ref(&self) -> &Pointer {
         &self.0
     }
 }
 
-pub trait ObjectPointer {
-    fn from_pointer(pointer: Pointer) -> Self;
-    fn pointer(&self) -> &Pointer;
+impl ObjectPointer for Object {}
 
-    fn get_type(&self) -> TypeInfo {
-        self.pointer().read(0x0).unwrap()
+pub trait ObjectPointer:
+    Sized + TryFrom<Pointer, Error = Box<dyn std::error::Error>> + AsRef<Pointer>
+{
+    fn get_type(&self) -> Result<TypeInfo> {
+        self.as_ref().read(0x0)
     }
 
     unsafe fn field<T: MemoryRead>(&self, offset: u64) -> Result<T> {
-        self.pointer().read(0x10 + offset)
+        self.as_ref().read(0x10 + offset)
     }
 }

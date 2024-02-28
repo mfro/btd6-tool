@@ -14,7 +14,7 @@ use windows::Win32::{
 
 use crate::Result;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Process {
     handle: HANDLE,
 }
