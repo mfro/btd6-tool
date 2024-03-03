@@ -1,26 +1,26 @@
-use std::fmt::Display;
-
 use crate::Result;
 
 use super::{types, ModelCache};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GameState {
+#[derive(Debug, Clone, PartialEq)]
+pub enum GameSummary {
     None,
-    InGame(InGameState),
+    InGame(InGameSummary),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InGameState {
+#[derive(Debug, Clone, PartialEq)]
+pub struct InGameSummary {
     pub cash: u64,
+    pub danger: Option<f32>,
+    pub max_path: f32,
     pub selected_index: Option<usize>,
 
     pub towers: Vec<Tower>,
     pub upgrades: Vec<Upgrade>,
 }
 
-impl InGameState {
-    pub fn load(model_cache: &ModelCache, ingame: &types::InGame) -> Result<InGameState> {
+impl InGameSummary {
+    pub fn load(model_cache: &ModelCache, ingame: &types::InGame) -> Result<InGameSummary> {
         let cash = super::get_cash(ingame)?;
 
         let mut towers = vec![];
@@ -54,23 +54,41 @@ impl InGameState {
             }
         };
 
+        let mut danger: Option<f32> = None;
+        let mut max_path = 0.0f32;
+
+        for path in ingame
+            .unity_to_simulation()?
+            .simulation()?
+            .map()?
+            .path_manager()?
+            .paths()?
+            .iter()?
+        {
+            let path = path?;
+
+            for segment in path.segments()?.iter()? {
+                let segment = segment?;
+
+                max_path = max_path.max(segment.leak_distance()?);
+
+                if segment.bloons()?.len()? > 0 {
+                    match danger.as_mut() {
+                        Some(danger) => *danger = danger.min(segment.leak_distance()?),
+                        None => danger = Some(segment.leak_distance()?),
+                    }
+                }
+            }
+        }
+
         Ok(Self {
             cash,
+            danger,
+            max_path,
             selected_index,
             towers,
             upgrades,
         })
-    }
-
-    pub fn print(&self) {
-        println!(
-            "total: ${}",
-            self.towers.iter().map(|t| t.worth).sum::<u64>()
-        );
-
-        for tower in self.towers.iter() {
-            println!("  {}", tower);
-        }
     }
 }
 
@@ -103,16 +121,6 @@ impl Tower {
             tiers,
             worth,
         })
-    }
-}
-
-impl Display for Tower {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}-{}-{} {} ${}",
-            self.tiers[0], self.tiers[1], self.tiers[2], self.name, self.worth
-        )
     }
 }
 

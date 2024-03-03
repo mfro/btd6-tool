@@ -11,19 +11,20 @@ use ratatui::{
     symbols::border,
     widgets::{block::*, *},
 };
+use windows::{core::{s, PCSTR}, Win32::UI::WindowsAndMessaging::{FindWindowA, GetForegroundWindow, SetForegroundWindow}};
 
 use crate::{
     btd::{
-        summary::{GameState, InGameState},
-        BloonsGame,
+        summary::{GameSummary, InGameSummary},
+        BloonsGame, BloonsHistogram,
     },
-    Previous, Result,
+    win32_util, Previous, Result,
 };
 
 mod tui;
 
 enum AppEvent {
-    Render(GameState),
+    Summary(GameSummary),
     Exit,
 }
 
@@ -53,23 +54,25 @@ impl InputThread {
     }
 }
 
-struct GameThread {
+struct SummaryThread {
     out: SyncSender<AppEvent>,
-    bloons: BloonsGame,
+    game: BloonsGame,
 }
 
-impl GameThread {
-    fn new(out: SyncSender<AppEvent>, bloons: BloonsGame) -> Self {
-        Self { out, bloons }
+impl SummaryThread {
+    fn new(out: SyncSender<AppEvent>, game: BloonsGame) -> Self {
+        Self { out, game }
     }
 
     fn run(&mut self) -> Result<()> {
         let mut previous = Previous::default();
 
         loop {
-            let state = self.bloons.get_state();
+            let state = self.game.get_summary();
 
-            if let (GameState::InGame(a), Some(GameState::InGame(b))) = (&state, &previous.value) {
+            if let (GameSummary::InGame(a), Some(GameSummary::InGame(b))) =
+                (&state, &previous.value)
+            {
                 let do_beep = a
                     .upgrades
                     .iter()
@@ -80,17 +83,68 @@ impl GameThread {
                     .any(|upgrade| (b.cash..a.cash).contains(&upgrade.cost));
 
                 if do_beep {
-                    crate::beep();
+                    win32_util::beep();
+                }
+
+                if is_pause(a) && !is_pause(b) {
+                    unsafe {
+                        let hwnd = FindWindowA(PCSTR::null(), s!("BloonsTD6-Epic"));
+                        SetForegroundWindow(hwnd);
+
+                        while hwnd != GetForegroundWindow() {
+                            thread::sleep(Duration::from_millis(1));
+                        }
+                    }
+
+                    win32_util::send_input(&win32_util::make_keypress_scancode(0x29));
                 }
             }
 
             if previous.set(state.clone()) {
-                self.out.send(AppEvent::Render(state))?;
+                self.out.send(AppEvent::Summary(state))?;
             }
 
             thread::sleep(Duration::from_millis(25));
         }
     }
+}
+
+struct BloonsThread {
+    out: SyncSender<AppEvent>,
+    game: BloonsGame,
+    histogram: BloonsHistogram,
+}
+
+impl BloonsThread {
+    fn new(out: SyncSender<AppEvent>, game: BloonsGame) -> Self {
+        let histogram = BloonsHistogram::new(256);
+
+        Self {
+            out,
+            game,
+            histogram,
+        }
+    }
+
+    fn run(&mut self) -> Result<()> {
+        loop {
+            match self.game.try_get_bloons() {
+                Err(e) => eprintln!("{:?}", e),
+                Ok(None) => continue,
+                Ok(Some(info)) => {
+                    for bloon in info.bloons {
+                        self.histogram.add_one(bloon.distance / info.max_path);
+                    }
+                }
+            }
+
+            thread::sleep(Duration::from_millis(1000));
+        }
+    }
+}
+
+fn is_pause(summary: &InGameSummary) -> bool {
+    summary.danger.is_some_and(|d| d < 10.0)
 }
 
 #[derive(Debug)]
@@ -109,7 +163,7 @@ impl App {
 
         let (send, recv) = mpsc::sync_channel(8);
 
-        let mut game_thread = GameThread::new(send.clone(), game);
+        let mut game_thread = SummaryThread::new(send.clone(), game.clone());
         let input_thread = InputThread::new(send.clone());
 
         thread::spawn(move || game_thread.run().unwrap());
@@ -117,7 +171,7 @@ impl App {
 
         while let Ok(event) = recv.recv() {
             match event {
-                AppEvent::Render(state) => self.render(&mut terminal, state)?,
+                AppEvent::Summary(state) => self.render(&mut terminal, state)?,
 
                 AppEvent::Exit => break,
             }
@@ -128,17 +182,17 @@ impl App {
         Ok(())
     }
 
-    fn render(&self, terminal: &mut tui::Tui, summary: GameState) -> Result<()> {
+    fn render(&self, terminal: &mut tui::Tui, summary: GameSummary) -> Result<()> {
         terminal.draw(|frame| frame.render_widget(&summary, frame.size()))?;
 
         Ok(())
     }
 }
 
-impl Widget for &GameState {
+impl Widget for &GameSummary {
     fn render(self, area: Rect, buf: &mut Buffer) {
         match self {
-            GameState::None => {
+            GameSummary::None => {
                 let title = Title::from(" Not in game ".bold());
 
                 Block::default()
@@ -148,14 +202,14 @@ impl Widget for &GameState {
                     .render(area, buf);
             }
 
-            GameState::InGame(state) => {
+            GameSummary::InGame(state) => {
                 state.render(area, buf);
             }
         }
     }
 }
 
-fn render_towers_table(area: Rect, buf: &mut Buffer, state: &InGameState) {
+fn render_towers_table(area: Rect, buf: &mut Buffer, state: &InGameSummary) {
     let rows: Vec<Row<'_>> = state
         .towers
         .iter()
@@ -191,7 +245,7 @@ fn render_towers_table(area: Rect, buf: &mut Buffer, state: &InGameState) {
     Widget::render(table, area, buf);
 }
 
-fn render_upgrades_table(area: Rect, buf: &mut Buffer, state: &InGameState) {
+fn render_upgrades_table(area: Rect, buf: &mut Buffer, state: &InGameSummary) {
     let index = state
         .upgrades
         .iter()
@@ -243,34 +297,66 @@ fn render_upgrades_table(area: Rect, buf: &mut Buffer, state: &InGameState) {
     Widget::render(table, area, buf);
 }
 
-impl Widget for &InGameState {
+fn render_danger(area: Rect, buf: &mut Buffer, state: &InGameSummary) {
+    match state.danger {
+        Some(danger) => {
+            let width = area.width - 1;
+
+            let right = (danger / state.max_path * width as f32) as usize;
+            let left = width as usize - right;
+
+            let text = "-".repeat(left) + "O" + &" ".repeat(right);
+
+            Line::from(text).render(area, buf);
+        }
+        None => {}
+    }
+}
+
+impl Widget for &InGameSummary {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let area = Rect::new(area.x, area.y, 80, area.height);
 
         let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(100), Constraint::Length(2)])
+            .split(area);
+
+        let top = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(area);
+            .split(layout[0]);
 
         let total = self.towers.iter().map(|t| t.worth).sum::<u64>();
 
+        let danger_track =
+            Block::default().borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT);
+
+        render_danger(danger_track.inner(layout[1]), buf, &self);
+        danger_track.render(layout[1], buf);
+
         let towers_table = Block::default()
             .title(format!(" Towers ${total} "))
+            .border_set(symbols::border::Set {
+                bottom_left: symbols::line::NORMAL.vertical_right,
+                ..symbols::border::PLAIN
+            })
             .borders(Borders::LEFT | Borders::TOP | Borders::BOTTOM);
 
-        render_towers_table(towers_table.inner(layout[0]), buf, &self);
-        towers_table.render(layout[0], buf);
+        render_towers_table(towers_table.inner(top[0]), buf, &self);
+        towers_table.render(top[0], buf);
 
         let upgrades_table = Block::default()
             .title(" Upgrades ")
             .border_set(symbols::border::Set {
                 top_left: symbols::line::NORMAL.horizontal_down,
                 bottom_left: symbols::line::NORMAL.horizontal_up,
+                bottom_right: symbols::line::NORMAL.vertical_left,
                 ..symbols::border::PLAIN
             })
             .borders(Borders::ALL);
 
-        render_upgrades_table(upgrades_table.inner(layout[1]), buf, &self);
-        upgrades_table.render(layout[1], buf);
+        render_upgrades_table(upgrades_table.inner(top[1]), buf, &self);
+        upgrades_table.render(top[1], buf);
     }
 }

@@ -63,7 +63,7 @@ macro_rules! object_type {
         }
 
         impl<$( $generic: MemoryRead ),*> crate::memory::MemoryRead for $ty<$( $generic ),*> {
-            const SIZE: usize = 8;
+            const SIZE: usize = crate::memory::Pointer::SIZE;
 
             fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
                 view.read::<Pointer>(address).and_then($ty::try_from)
@@ -71,7 +71,7 @@ macro_rules! object_type {
         }
 
         impl<$( $generic: MemoryRead ),*> crate::memory::MemoryRead for Option<$ty<$( $generic ),*>> {
-            const SIZE: usize = 8;
+            const SIZE: usize = crate::memory::Pointer::SIZE;
 
             fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
                 let pointer: crate::memory::Pointer = view.read(address)?;

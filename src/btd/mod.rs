@@ -15,7 +15,7 @@ pub mod types;
 use types::{GameModel, InGame, Tower, UpgradeModel};
 
 use self::{
-    summary::{GameState, InGameState},
+    summary::{GameSummary, InGameSummary},
     types::UpgradePathModel,
 };
 
@@ -92,6 +92,7 @@ pub fn get_all_available_upgrades(
     Ok(options)
 }
 
+#[derive(Clone)]
 pub struct ModelCache {
     upgrades: HashMap<String, UpgradeModel>,
 }
@@ -117,6 +118,7 @@ impl ModelCache {
     }
 }
 
+#[derive(Clone)]
 pub struct BloonsGame {
     ingame_addr: Previous<u64>,
     model_cache: Option<ModelCache>,
@@ -146,18 +148,57 @@ impl BloonsGame {
         Ok(Self::new(memory, module.get_bounds()?.0))
     }
 
-    pub fn get_state(&mut self) -> GameState {
-        let state = match self.try_get_state() {
+    pub fn get_ingame(&self) -> Result<Option<InGame>> {
+        InGame::get_instance(&self.memory, self.module_offset)
+    }
+
+    pub fn try_get_bloons(&self) -> Result<Option<BloonsState>> {
+        match self.get_ingame()? {
+            None => Ok(None),
+            Some(ingame) => {
+                let mut bloons = vec![];
+                let mut max_path = 0.0f32;
+
+                for path in ingame
+                    .unity_to_simulation()?
+                    .simulation()?
+                    .map()?
+                    .path_manager()?
+                    .paths()?
+                    .iter()?
+                {
+                    let path = path?;
+
+                    for segment in path.segments()?.iter()? {
+                        let segment = segment?;
+
+                        max_path = max_path.max(segment.leak_distance()?);
+
+                        for bloon in segment.bloons()?.iter()? {
+                            let bloon = bloon?;
+
+                            bloons.push(Bloon::load(bloon)?);
+                        }
+                    }
+                }
+
+                Ok(Some(BloonsState::new(bloons, max_path)))
+            }
+        }
+    }
+
+    pub fn get_summary(&mut self) -> GameSummary {
+        let state = match self.try_get_summary() {
             Ok(s) => s,
-            Err(_) => GameState::None,
+            Err(_) => GameSummary::None,
         };
 
         state
     }
 
-    pub fn try_get_state(&mut self) -> Result<GameState> {
-        match InGame::get_instance(&self.memory, self.module_offset)? {
-            None => Ok(GameState::None),
+    pub fn try_get_summary(&mut self) -> Result<GameSummary> {
+        match self.get_ingame()? {
+            None => Ok(GameSummary::None),
             Some(ingame) => {
                 if self.ingame_addr.set(ingame.0.address) {
                     self.model_cache = None;
@@ -173,10 +214,66 @@ impl BloonsGame {
                     }
                 };
 
-                let state = InGameState::load(model_cache, &ingame)?;
+                let state = InGameSummary::load(model_cache, &ingame)?;
 
-                Ok(GameState::InGame(state))
+                Ok(GameSummary::InGame(state))
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BloonsState {
+    pub bloons: Vec<Bloon>,
+    pub max_path: f32,
+}
+
+impl BloonsState {
+    pub fn new(bloons: Vec<Bloon>, max_path: f32) -> Self {
+        Self { bloons, max_path }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Bloon {
+    pub kind: String,
+    pub distance: f32,
+}
+
+impl Bloon {
+    fn load(bloon: types::BloonTargetProxy) -> Result<Bloon> {
+        let kind = bloon.bloon.model()?.base_id()?.to_string();
+        let distance = bloon.bloon.distance_travelled()?;
+
+        Ok(Self { kind, distance })
+    }
+}
+
+pub struct BloonsHistogram {
+    pub buckets: Vec<usize>,
+    pub total: usize,
+}
+
+impl BloonsHistogram {
+    pub fn new(bucket_count: usize) -> Self {
+        let buckets = vec![0; bucket_count];
+        let total = 0;
+
+        Self { buckets, total }
+    }
+
+    pub fn add_one(&mut self, value: f32) {
+        let index = (value * self.buckets.len() as f32) as usize;
+
+        self.buckets[index] += 1;
+        self.total += 1;
+    }
+
+    pub fn get_percentile(&self, value: f32) -> f32 {
+        let index = (value * self.buckets.len() as f32) as usize;
+
+        let better: usize = self.buckets[0..index].iter().sum();
+
+        better as f32 / self.total as f32
     }
 }

@@ -80,9 +80,7 @@ impl Entity {
 }
 
 object_type!(RootObject);
-impl RootObject {
-
-}
+impl RootObject {}
 
 object_type!(TowerManager);
 impl TowerManager {
@@ -124,6 +122,7 @@ impl TowerManager {
 object_type!(Map);
 impl Map {
     field!(0x0038 entity: Entity);
+    field!(0x0080 path_manager: PathManager);
     field!(0x0088 spawner: Spawner);
     field!(0x0098 towers_by_area: Dictionary<Pointer, List<Tower>>);
 
@@ -137,30 +136,59 @@ impl Map {
         }
 
         Ok(towers)
-        // for list in self.towers_by_area().iter() {
-        //     for tower in list.iter() {
-        //         println!(
-        //             "{} {}",
-        //             tower
-        //                 .model()
-        //                 .tiers()
-        //                 .iter()
-        //                 .map(|x| x.to_string())
-        //                 .collect::<Vec<_>>()
-        //                 .join("-"),
-        //             tower.model().base_id().get(),
-        //         );
-
-        //         // for upgrade in tower.model().upgrades().iter() {
-        //         //     println!("  {}/{}", upgrade.tower().get(), upgrade.upgrade().get());
-        //         // }
-
-        //         // for upgrade in tower.model().applied_upgrades().iter() {
-        //         //     println!("  {}", upgrade.get());
-        //         // }
-        //     }
-        // }
     }
+}
+
+object_type!(PathManager);
+impl PathManager {
+    field!(0x0048 paths: List<Path>);
+}
+
+object_type!(Path);
+impl Path {
+    field!(0x0000 segments: Array<PathSegment>);
+    field!(0x0008 model: PathModel);
+    field!(0x0010 is_active: bool);
+    field!(0x0011 is_hidden: bool);
+    field!(0x0014 spawn_distance: f32);
+    field!(0x0018 leak_distance: f32);
+    field!(0x0120 total_path_length: f32);
+    field!(0x0030 bloons: LockList<Bloon>);
+}
+
+#[derive(Debug, Clone)]
+pub struct BloonTargetProxy {
+    pub bloon: Bloon,
+    pub segment: PathSegment,
+}
+
+impl MemoryRead for BloonTargetProxy {
+    const SIZE: usize = Bloon::SIZE + PathSegment::SIZE;
+
+    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+        let bloon = view.read(address)?;
+        let segment = view.read(address + Bloon::SIZE as u64)?;
+
+        Ok(Self { bloon, segment })
+    }
+}
+
+object_type!(PathModel);
+impl PathModel {}
+
+object_type!(PathSegment);
+impl PathSegment {
+    field!(0x0000 bloons: List<BloonTargetProxy>);
+    field!(0x0010 min: f32);
+    field!(0x0014 max: f32);
+    field!(0x0018 center: f32);
+    field!(0x0028 leak_distance: f32);
+}
+
+object_type!(Bloon);
+impl Bloon {
+    field!(0x00a8 model: BloonModel);
+    field!(0x0154 distance_travelled: f32);
 }
 
 object_type!(GameModel);
@@ -240,6 +268,7 @@ impl Spawner {
     field!(0x0060 round_data: Dictionary<u32, RoundData>);
     field!(0x00d8 current_round: KonFuze_NoShuffle);
 }
+
 object_type!(RoundData);
 impl RoundData {
     // field!(0x00)
