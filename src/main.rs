@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use btd::BloonsGame;
 use windows::{
     core::{s, PCSTR},
     Win32::{

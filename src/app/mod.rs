@@ -11,7 +11,10 @@ use ratatui::{
     symbols::border,
     widgets::{block::*, *},
 };
-use windows::{core::{s, PCSTR}, Win32::UI::WindowsAndMessaging::{FindWindowA, GetForegroundWindow, SetForegroundWindow}};
+use windows::{
+    core::{s, PCSTR},
+    Win32::UI::{Input::KeyboardAndMouse::{EnableWindow, SetActiveWindow, SetCapture, SetFocus}, WindowsAndMessaging::{FindWindowA, GetForegroundWindow, SetForegroundWindow}},
+};
 
 use crate::{
     btd::{
@@ -89,14 +92,25 @@ impl SummaryThread {
                 if is_pause(a) && !is_pause(b) {
                     unsafe {
                         let hwnd = FindWindowA(PCSTR::null(), s!("BloonsTD6-Epic"));
-                        SetForegroundWindow(hwnd);
 
                         while hwnd != GetForegroundWindow() {
+                            SetForegroundWindow(hwnd);
+                            SetCapture(hwnd);
+                            SetFocus(hwnd);
+                            SetActiveWindow(hwnd);
                             thread::sleep(Duration::from_millis(1));
                         }
                     }
 
-                    win32_util::send_input(&win32_util::make_keypress_scancode(0x29));
+                    while !self
+                        .game
+                        .get_ingame()?
+                        .unwrap()
+                        .stopped_clock_for_menu_open()?
+                    {
+                        win32_util::send_input(&win32_util::make_keypress_scancode(0x29));
+                        thread::sleep(Duration::from_millis(1));
+                    }
                 }
             }
 
@@ -144,7 +158,7 @@ impl BloonsThread {
 }
 
 fn is_pause(summary: &InGameSummary) -> bool {
-    summary.danger.is_some_and(|d| d < 10.0)
+    summary.danger.is_some_and(|d| d < 30.0)
 }
 
 #[derive(Debug)]

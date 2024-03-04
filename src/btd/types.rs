@@ -26,6 +26,7 @@ object_type!(InGame);
 impl InGame {
     field!(0x00b8 unity_to_simulation: UnityToSimulation);
     field!(0x0060 input_manager: InputManager);
+    field!(0x0168 stopped_clock_for_menu_open: bool);
 
     pub fn get_instance(
         memory_view: &ProcessMemoryView,
