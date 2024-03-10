@@ -63,15 +63,15 @@ impl Simulation {
     field!(0x0000 entity: Object);
     field!(0x0008 model: GameModel);
     field!(0x0050 tower_manager: TowerManager);
+    field!(0x0378 cash_managers: Dictionary<Object, CashManager>);
     field!(0x0398 map: Map);
     field!(0x0390 health: KonFuze);
 
     pub fn cash_manager(&self) -> Result<CashManager> {
-        unsafe {
-            let cash_managers: Dictionary<Object, CashManager> = self.field(0x378)?;
+        let cash_managers = self.cash_managers()?;
+        assert_eq!(1, cash_managers.len()?);
 
-            Ok(cash_managers.get(0)?.1)
-        }
+        Ok(cash_managers.get(0)?.1)
     }
 }
 
@@ -123,6 +123,7 @@ impl TowerManager {
 object_type!(Map);
 impl Map {
     field!(0x0038 entity: Entity);
+    field!(0x0048 model: MapModel);
     field!(0x0080 path_manager: PathManager);
     field!(0x0088 spawner: Spawner);
     field!(0x0098 towers_by_area: Dictionary<Pointer, List<Tower>>);
@@ -194,15 +195,35 @@ impl Bloon {
 
 object_type!(GameModel);
 impl GameModel {
+    field!(0x0048 difficulty_id: CSharpString);
+    field!(0x0070 game_type: CSharpString);
+    field!(0x0078 game_mode: CSharpString);
+    field!(0x0088 reverse_mode: bool);
     field!(0x00c0 map: MapModel);
     field!(0x00c8 round_set: RoundSetModel);
     field!(0x00d0 income_set: IncomeSetModel);
     field!(0x00e0 towers: Array<TowerModel>);
     field!(0x00e8 upgrades: Array<UpgradeModel>);
     field!(0x00f0 bloons: Array<BloonModel>);
+
+    pub fn get_identifier(&self) -> Result<String> {
+        let mode = self.game_mode()?;
+        let map_name = self.map()?.map_name()?;
+
+        assert_eq!("Standard", self.game_type()?.to_string());
+
+        let identifier = format!("{} - {}", map_name, mode);
+
+        Ok(identifier)
+    }
 }
 
 object_type!(MapModel);
+impl MapModel {
+    field!(0x0068 map_difficulty: i32);
+    field!(0x0070 map_name: CSharpString);
+}
+
 object_type!(RoundSetModel);
 object_type!(IncomeSetModel);
 object_type!(BloonModel);

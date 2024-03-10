@@ -48,6 +48,22 @@ impl<T: PartialEq> Previous<T> {
     }
 }
 
+enum GameDifficulty {
+    Easy,
+    Medium,
+    Hard,
+    Impoppable,
+}
+
+enum GameType {
+    Standard,
+    Unknown(String),
+}
+
+enum GameMode {
+    Chimps,
+}
+
 fn main() -> Result<()> {
     let mut app = App::new();
     app.run()?;

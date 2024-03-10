@@ -1,0 +1,4 @@
+- fix selecting non-towers
+- fix heros
+- fix 0-cost towers
+- game log
