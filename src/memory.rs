@@ -315,6 +315,12 @@ impl TryFrom<Pointer> for Object {
     }
 }
 
+impl Into<Pointer> for Object {
+    fn into(self) -> Pointer {
+        self.0
+    }
+}
+
 impl AsRef<Pointer> for Object {
     fn as_ref(&self) -> &Pointer {
         &self.0
@@ -324,8 +330,12 @@ impl AsRef<Pointer> for Object {
 impl ObjectPointer for Object {}
 
 pub trait ObjectPointer:
-    Sized + TryFrom<Pointer, Error = Box<dyn std::error::Error>> + AsRef<Pointer>
+    Sized + TryFrom<Pointer, Error = Box<dyn std::error::Error>> + AsRef<Pointer> + Into<Pointer>
 {
+    fn cast<T: ObjectPointer>(self) -> Result<T> {
+        T::try_from(self.as_ref().clone())
+    }
+
     fn get_type(&self) -> Result<TypeInfo> {
         self.as_ref().read(0x0)
     }

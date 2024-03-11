@@ -1,4 +1,11 @@
 - fix selecting non-towers
-- fix heros
-- fix 0-cost towers
+- fix bakable
+
 - game log
+  - Create a log of purchases (and locations?)
+  - save in a file based on track name & difficulty
+
+- bloon pop histogram
+  - each tick, identify bloons from the previous tick that are now missing (popped)
+  - track where this happened
+  - alarm if bloons get past where they are usually popped?

@@ -1,6 +1,9 @@
-use crate::Result;
+use crate::{memory::ObjectPointer, Result};
 
-use super::{types, ModelCache};
+use super::{
+    types::{self, TowerSet, TowerToSimulation},
+    ModelCache,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum GameSummary {
@@ -10,6 +13,9 @@ pub enum GameSummary {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InGameSummary {
+    pub map_name: String,
+    pub mode: String,
+
     pub cash: u64,
     pub danger: Option<f32>,
     pub max_path: f32,
@@ -23,6 +29,21 @@ impl InGameSummary {
     pub fn load(model_cache: &ModelCache, ingame: &types::InGame) -> Result<InGameSummary> {
         let cash = super::get_cash(ingame)?;
 
+        let map_name = ingame
+            .unity_to_simulation()?
+            .simulation()?
+            .model()?
+            .map()?
+            .map_name()?
+            .to_string();
+
+        let mode = ingame
+            .unity_to_simulation()?
+            .simulation()?
+            .model()?
+            .game_mode()?
+            .to_string();
+
         let mut towers = vec![];
 
         for tower in ingame
@@ -31,8 +52,12 @@ impl InGameSummary {
             .map()?
             .towers()?
         {
-            if tower.entity()?.is_some() && tower.worth()? > 0.0 {
-                towers.push(Tower::load(&tower)?);
+            if tower.entity()?.is_some() && tower.model()?.is_bakable()? {
+                if tower.model()?.tower_set()? == TowerSet::HERO {
+                    towers.push(Tower::Hero(Hero::load(&tower)?));
+                } else {
+                    towers.push(Tower::Basic(BasicTower::load(&tower)?));
+                }
             }
         }
 
@@ -41,16 +66,27 @@ impl InGameSummary {
         for (tower, upgrade, _) in super::get_all_available_upgrades(model_cache, ingame)? {
             let id = tower.id()?.to_string();
 
-            if towers.iter().any(|t| t.id == id) {
-                upgrades.push(Upgrade::new(&towers, tower, upgrade)?);
+            if let Some(index) = towers.iter().position(|t| match t {
+                Tower::Basic(t) => t.id == id,
+                _ => false,
+            }) {
+                upgrades.push(Upgrade::new(index, upgrade)?);
             }
         }
 
         let selected_index = match ingame.input_manager()?.selected()? {
             None => None,
-            Some(s) => {
-                let id = s.tower()?.id()?.to_string();
-                towers.iter().position(|t| t.id == id)
+            Some(selected) => {
+                if let Ok(selected) = selected.cast::<TowerToSimulation>() {
+                    let id = selected.tower()?.id()?.to_string();
+
+                    towers.iter().position(|t| match t {
+                        Tower::Basic(t) => t.id == id,
+                        _ => false,
+                    })
+                } else {
+                    None
+                }
             }
         };
 
@@ -82,6 +118,8 @@ impl InGameSummary {
         }
 
         Ok(Self {
+            map_name,
+            mode,
             cash,
             danger,
             max_path,
@@ -93,15 +131,46 @@ impl InGameSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Tower {
+pub struct Hero {
+    pub id: String,
+    pub name: String,
+    pub level: u8,
+    pub worth: u64,
+}
+
+impl Hero {
+    pub fn load(tower: &types::Tower) -> Result<Hero> {
+        let id = tower.id()?.to_string();
+        let name = tower.model()?.base_id()?.to_string();
+
+        let level = tower.model()?.tier()? as u8;
+        let worth = tower.worth()? as _;
+
+        Ok(Self {
+            id,
+            name,
+            level,
+            worth,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Tower {
+    Basic(BasicTower),
+    Hero(Hero),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BasicTower {
     pub id: String,
     pub name: String,
     pub tiers: [u8; 3],
     pub worth: u64,
 }
 
-impl Tower {
-    pub fn load(tower: &types::Tower) -> Result<Tower> {
+impl BasicTower {
+    pub fn load(tower: &types::Tower) -> Result<BasicTower> {
         let id = tower.id()?.to_string();
         let name = tower.model()?.base_id()?.to_string();
         let tiers = tower
@@ -134,16 +203,10 @@ pub struct Upgrade {
 }
 
 impl Upgrade {
-    fn new(towers: &[Tower], tower: types::Tower, upgrade: types::UpgradeModel) -> Result<Upgrade> {
-        let id = tower.id()?.to_string();
-        let tower_index = match towers.iter().position(|t| t.id == id) {
-            Some(v) => v,
-            None => return Err("tower not found".into()),
-        };
-
-        let path = upgrade.path()? as _;
-        let tier = upgrade.tier()? as _;
-        let cost = upgrade.cost()? as _;
+    fn new(tower_index: usize, upgrade: types::UpgradeModel) -> Result<Upgrade> {
+        let path = upgrade.path()?.try_into()?;
+        let tier = upgrade.tier()?.try_into()?;
+        let cost = upgrade.cost()?.try_into()?;
         let name = upgrade.name()?.to_string();
 
         Ok(Self {

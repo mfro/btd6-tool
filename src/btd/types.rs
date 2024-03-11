@@ -42,7 +42,7 @@ impl InGame {
 
 object_type!(InputManager);
 impl InputManager {
-    field!(0x1a8 selected: Option<TowerToSimulation>);
+    field!(0x1a8 selected: Option<Object>);
 }
 
 // Assets_Scripts_Unity_Bridge_UnityToSimulation_o
@@ -69,9 +69,11 @@ impl Simulation {
 
     pub fn cash_manager(&self) -> Result<CashManager> {
         let cash_managers = self.cash_managers()?;
-        assert_eq!(1, cash_managers.len()?);
-
-        Ok(cash_managers.get(0)?.1)
+        if cash_managers.len()? != 1 {
+            Err("cash manager count".into())
+        } else {
+            Ok(cash_managers.get(0)?.1)
+        }
     }
 }
 
@@ -259,8 +261,22 @@ impl TowerModel {
     field!(0x0028 base_id: CSharpString);
     field!(0x0044 tier: u32);
     field!(0x0048 tiers: Array<u32>);
+    field!(0x0050 tower_set: u32);
     field!(0x00b8 upgrades: Array<UpgradePathModel>);
     field!(0x00c0 applied_upgrades: Array<CSharpString>);
+    field!(0x00d9 is_bakable: bool);
+}
+
+pub struct TowerSet;
+impl TowerSet {
+    pub const NONE: u32 = 0;
+    pub const PRIMARY: u32 = 1;
+    pub const MILITARY: u32 = 2;
+    pub const MAGIC: u32 = 4;
+    pub const SUPPORT: u32 = 8;
+    pub const HERO: u32 = 16;
+    pub const PARAGON: u32 = 32;
+    pub const ITEMS: u32 = 64;
 }
 
 object_type!(UpgradeModel);

@@ -13,12 +13,15 @@ use ratatui::{
 };
 use windows::{
     core::{s, PCSTR},
-    Win32::UI::{Input::KeyboardAndMouse::{EnableWindow, SetActiveWindow, SetCapture, SetFocus}, WindowsAndMessaging::{FindWindowA, GetForegroundWindow, SetForegroundWindow}},
+    Win32::UI::{
+        Input::KeyboardAndMouse::{EnableWindow, SetActiveWindow, SetCapture, SetFocus},
+        WindowsAndMessaging::{FindWindowA, GetForegroundWindow, SetForegroundWindow},
+    },
 };
 
 use crate::{
     btd::{
-        summary::{GameSummary, InGameSummary},
+        summary::{GameSummary, InGameSummary, Tower},
         BloonsGame, BloonsHistogram,
     },
     win32_util, Previous, Result,
@@ -235,15 +238,24 @@ fn render_towers_table(area: Rect, buf: &mut Buffer, state: &InGameSummary) {
                 Style::new()
             };
 
-            Row::new([
-                Text::raw(format!("${}", tower.worth)).alignment(Alignment::Right),
-                Text::raw(format!(
-                    "{}-{}-{}",
-                    tower.tiers[0], tower.tiers[1], tower.tiers[2]
-                )),
-                Text::raw(format!("{}", tower.name)),
-            ])
-            .style(style)
+            let row = match tower {
+                Tower::Basic(tower) => Row::new([
+                    Text::raw(format!("${}", tower.worth)).alignment(Alignment::Right),
+                    Text::raw(format!(
+                        "{}-{}-{}",
+                        tower.tiers[0], tower.tiers[1], tower.tiers[2]
+                    )),
+                    Text::raw(format!("{}", tower.name)),
+                ]),
+
+                Tower::Hero(hero) => Row::new([
+                    Text::raw(format!("${}", hero.worth)).alignment(Alignment::Right),
+                    Text::raw(format!("{}", hero.level)).alignment(Alignment::Right),
+                    Text::raw(format!("{}", hero.name)),
+                ]),
+            };
+
+            row.style(style)
         })
         .collect::<Vec<_>>();
 
@@ -333,21 +345,34 @@ impl Widget for &InGameSummary {
 
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(100), Constraint::Length(2)])
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Percentage(100),
+                Constraint::Length(2),
+            ])
             .split(area);
+
+        Line::from(format!("{} {}", self.map_name, self.mode)).render(layout[0], buf);
 
         let top = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(layout[0]);
+            .split(layout[1]);
 
-        let total = self.towers.iter().map(|t| t.worth).sum::<u64>();
+        let total = self
+            .towers
+            .iter()
+            .map(|t| match t {
+                Tower::Basic(t) => t.worth,
+                Tower::Hero(t) => t.worth,
+            })
+            .sum::<u64>();
 
         let danger_track =
             Block::default().borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT);
 
-        render_danger(danger_track.inner(layout[1]), buf, &self);
-        danger_track.render(layout[1], buf);
+        render_danger(danger_track.inner(layout[2]), buf, &self);
+        danger_track.render(layout[2], buf);
 
         let towers_table = Block::default()
             .title(format!(" Towers ${total} "))
