@@ -1,7 +1,7 @@
 use crate::{memory::ObjectPointer, Result};
 
 use super::{
-    types::{self, TowerSet, TowerToSimulation},
+    types::{self, ObjectId, TowerSet, TowerToSimulation},
     ModelCache,
 };
 
@@ -52,7 +52,7 @@ impl InGameSummary {
             .map()?
             .towers()?
         {
-            if tower.entity()?.is_some() && tower.model()?.is_bakable()? {
+            if tower.entity()?.is_some() && tower.parent_tower_id()? == ObjectId::INVALID {
                 if tower.model()?.tower_set()? == TowerSet::HERO {
                     towers.push(Tower::Hero(Hero::load(&tower)?));
                 } else {

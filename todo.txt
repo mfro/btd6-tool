@@ -1,6 +1,3 @@
-- fix selecting non-towers
-- fix bakable
-
 - game log
   - Create a log of purchases (and locations?)
   - save in a file based on track name & difficulty

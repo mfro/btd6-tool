@@ -21,6 +21,22 @@ macro_rules! field {
 
 const TYPE_OFFSET_IN_GAME: u64 = 0x32d9b98;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObjectId(u32);
+
+impl ObjectId {
+    pub const INVALID: ObjectId = ObjectId(4294967295);
+}
+
+impl MemoryRead for ObjectId {
+    const SIZE: usize = u32::SIZE;
+
+    fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+        Ok(Self(view.read(address)?))
+    }
+}
+
+
 // Assets_Scripts_Unity_UI_New_InGame_InGame_o
 object_type!(InGame);
 impl InGame {
@@ -252,6 +268,7 @@ impl Tower {
     field!(0x00a0 damage_dealt: u64);
     field!(0x00a8 cash_earned: u64);
     field!(0x00b0 applied_cash: f32);
+    field!(0x00c4 parent_tower_id: ObjectId);
     field!(0x00d0 model: TowerModel);
     field!(0x0038 entity: Option<Entity>);
 }

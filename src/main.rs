@@ -1,19 +1,3 @@
-use std::time::Duration;
-
-use btd::BloonsGame;
-use windows::{
-    core::{s, PCSTR},
-    Win32::{
-        Foundation::{LPARAM, WPARAM},
-        UI::{
-            Input::KeyboardAndMouse::{VK_ESCAPE, VK_OEM_3},
-            WindowsAndMessaging::{
-                FindWindowA, PostMessageA, SendMessageA, WM_CHAR, WM_KEYDOWN, WM_KEYUP,
-            },
-        },
-    },
-};
-
 mod app;
 mod btd;
 mod memory;
@@ -51,6 +35,9 @@ impl<T: PartialEq> Previous<T> {
 fn main() -> Result<()> {
     let mut app = App::new();
     app.run()?;
+
+    // let game = BloonsGame::find_game()?;
+    // let ingame = game.get_ingame()?.expect("ingame");
 
     Ok(())
 }
