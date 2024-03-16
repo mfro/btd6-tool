@@ -2,7 +2,7 @@ use crate::{memory::ObjectPointer, Result};
 
 use super::{
     types::{self, ObjectId, TowerSet, TowerToSimulation},
-    ModelCache,
+    UpgradeModelCache,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -15,6 +15,7 @@ pub enum GameSummary {
 pub struct InGameSummary {
     pub map_name: String,
     pub mode: String,
+    pub seed: i32,
 
     pub cash: u64,
     pub danger: Option<f32>,
@@ -26,32 +27,20 @@ pub struct InGameSummary {
 }
 
 impl InGameSummary {
-    pub fn load(model_cache: &ModelCache, ingame: &types::InGame) -> Result<InGameSummary> {
+    pub fn load(model_cache: &UpgradeModelCache, ingame: &types::InGame) -> Result<InGameSummary> {
         let cash = super::get_cash(ingame)?;
 
-        let map_name = ingame
-            .unity_to_simulation()?
-            .simulation()?
-            .model()?
-            .map()?
-            .map_name()?
-            .to_string();
+        let sim = ingame.unity_to_simulation()?.simulation()?;
 
-        let mode = ingame
-            .unity_to_simulation()?
-            .simulation()?
-            .model()?
-            .game_mode()?
-            .to_string();
+        let map_name = sim.model()?.map()?.map_name()?.to_string();
+
+        let mode = sim.model()?.game_mode()?.to_string();
+
+        let seed = sim.model()?.random_seed()?;
 
         let mut towers = vec![];
 
-        for tower in ingame
-            .unity_to_simulation()?
-            .simulation()?
-            .map()?
-            .towers()?
-        {
+        for tower in sim.map()?.towers()? {
             if tower.entity()?.is_some() && tower.parent_tower_id()? == ObjectId::INVALID {
                 if tower.model()?.tower_set()? == TowerSet::HERO {
                     towers.push(Tower::Hero(Hero::load(&tower)?));
@@ -93,14 +82,7 @@ impl InGameSummary {
         let mut danger: Option<f32> = None;
         let mut max_path = 0.0f32;
 
-        for path in ingame
-            .unity_to_simulation()?
-            .simulation()?
-            .map()?
-            .path_manager()?
-            .paths()?
-            .iter()?
-        {
+        for path in sim.map()?.path_manager()?.paths()?.iter()? {
             let path = path?;
 
             for segment in path.segments()?.iter()? {
@@ -120,6 +102,7 @@ impl InGameSummary {
         Ok(Self {
             map_name,
             mode,
+            seed,
             cash,
             danger,
             max_path,
@@ -128,6 +111,12 @@ impl InGameSummary {
             upgrades,
         })
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Tower {
+    Basic(BasicTower),
+    Hero(Hero),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,12 +142,6 @@ impl Hero {
             worth,
         })
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Tower {
-    Basic(BasicTower),
-    Hero(Hero),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

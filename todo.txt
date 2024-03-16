@@ -6,3 +6,7 @@
   - each tick, identify bloons from the previous tick that are now missing (popped)
   - track where this happened
   - alarm if bloons get past where they are usually popped?
+
+- cash futures
+  - show expected cash on each upcoming round?
+  - show expected round on each listed upgrade?

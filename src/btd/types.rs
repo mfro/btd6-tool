@@ -36,7 +36,6 @@ impl MemoryRead for ObjectId {
     }
 }
 
-
 // Assets_Scripts_Unity_UI_New_InGame_InGame_o
 object_type!(InGame);
 impl InGame {
@@ -78,6 +77,8 @@ object_type!(Simulation);
 impl Simulation {
     field!(0x0000 entity: Object);
     field!(0x0008 model: GameModel);
+    field!(0x0018 time: Time);
+    field!(0x0020 round_time: Time);
     field!(0x0050 tower_manager: TowerManager);
     field!(0x0378 cash_managers: Dictionary<Object, CashManager>);
     field!(0x0398 map: Map);
@@ -91,6 +92,11 @@ impl Simulation {
             Ok(cash_managers.get(0)?.1)
         }
     }
+}
+
+object_type!(Time);
+impl Time {
+    field!(0x0000 elapsed: i32);
 }
 
 object_type!(Entity);
@@ -216,6 +222,7 @@ impl GameModel {
     field!(0x0048 difficulty_id: CSharpString);
     field!(0x0070 game_type: CSharpString);
     field!(0x0078 game_mode: CSharpString);
+    field!(0x0084 random_seed: i32);
     field!(0x0088 reverse_mode: bool);
     field!(0x00c0 map: MapModel);
     field!(0x00c8 round_set: RoundSetModel);
@@ -243,18 +250,58 @@ impl MapModel {
 }
 
 object_type!(RoundSetModel);
+impl RoundSetModel {
+    field!(0x0020 rounds: Array<RoundModel>);
+}
+
+object_type!(RoundModel);
+impl RoundModel {
+    field!(0x0020 groups: Array<BloonGroupModel>);
+    field!(0x0028 emissions: Option<Array<BloonEmissionModel>>);
+}
+
+object_type!(BloonGroupModel);
+impl BloonGroupModel {
+    field!(0x0020 bloon: CSharpString);
+    field!(0x0028 start: f32);
+    field!(0x002c end: f32);
+    field!(0x0030 count: i32);
+}
+
+object_type!(BloonEmissionModel);
+impl BloonEmissionModel {
+    field!(0x0020 bloon: CSharpString);
+    field!(0x0028 time: f32);
+    field!(0x002c emission_index: i32);
+    field!(0x0030 is_custom_boss_emission: bool);
+    field!(0x0034 tower_set_immunity: u32);
+}
+
 object_type!(IncomeSetModel);
 object_type!(BloonModel);
 impl BloonModel {
     field!(0x0020 id: CSharpString);
     field!(0x0028 base_id: CSharpString);
+    field!(0x00a4 max_health: i32);
+    field!(0x00b0 leak_damage: f32);
+    field!(0x00b4 layer_number: i32);
     field!(0x00d8 children: List<BloonModel>);
 
-    pub fn get_worth(&self) -> Result<u64> {
+    pub fn count_rbe(&self) -> Result<u64> {
         let children = self
             .children()?
             .iter()?
-            .map(|b| b.and_then(|v| v.get_worth()))
+            .map(|b| b.and_then(|v| v.count_rbe()))
+            .sum::<Result<u64>>()?;
+
+        Ok(self.max_health()? as u64 + children)
+    }
+
+    pub fn count_worth(&self) -> Result<u64> {
+        let children = self
+            .children()?
+            .iter()?
+            .map(|b| b.and_then(|v| v.count_worth()))
             .sum::<Result<u64>>()?;
 
         Ok(1 + children)

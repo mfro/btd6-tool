@@ -10,13 +10,14 @@ use crate::{
     Previous, Result,
 };
 
+pub mod log;
 pub mod summary;
 pub mod types;
 use types::{GameModel, InGame, Tower, UpgradeModel};
 
 use self::{
     summary::{GameSummary, InGameSummary},
-    types::UpgradePathModel,
+    types::{BloonModel, UpgradePathModel},
 };
 
 pub fn find_pid() -> Result<u32> {
@@ -55,7 +56,7 @@ pub fn get_cash(ingame: &InGame) -> Result<u64> {
 }
 
 pub fn get_available_upgrades(
-    model_cache: &ModelCache,
+    model_cache: &UpgradeModelCache,
     tower: &Tower,
 ) -> Result<Vec<(Tower, UpgradeModel, u64)>> {
     let mut options = vec![];
@@ -72,7 +73,7 @@ pub fn get_available_upgrades(
 }
 
 pub fn get_all_available_upgrades(
-    model_cache: &ModelCache,
+    model_cache: &UpgradeModelCache,
     ingame: &InGame,
 ) -> Result<Vec<(Tower, UpgradeModel, u64)>> {
     let simulation = ingame.unity_to_simulation()?.simulation()?;
@@ -92,13 +93,93 @@ pub fn get_all_available_upgrades(
     Ok(options)
 }
 
+#[derive(Default)]
+struct BloonModelCacheBuilder {
+    values: HashMap<String, BloonModelCacheEntry>,
+}
+
+impl BloonModelCacheBuilder {
+    fn build(&mut self, raw: &BloonModel) -> Result<&BloonModelCacheEntry> {
+        let id = raw.id()?.to_string();
+
+        if !self.values.contains_key(&id) {
+            let base_health = raw.max_health()? as u64;
+            let mut base_total_rbe = base_health;
+            let mut base_total_worth = 1;
+
+            for child in raw.children()?.iter()? {
+                let child = self.build(&child?)?;
+
+                base_total_rbe += child.base_total_rbe;
+                base_total_worth += child.base_total_worth;
+            }
+
+            self.values.insert(
+                id.clone(),
+                BloonModelCacheEntry {
+                    base_health,
+                    base_total_rbe,
+                    base_total_worth,
+                },
+            );
+        }
+
+        Ok(&self.values[&id])
+    }
+}
+
+pub struct BloonModelCache {
+    values: HashMap<String, BloonModelCacheEntry>,
+}
+
+impl BloonModelCache {
+    pub fn load(model: &GameModel) -> Result<Self> {
+        let mut builder = BloonModelCacheBuilder::default();
+
+        for bloon in model.bloons()?.iter()? {
+            builder.build(&bloon?)?;
+        }
+
+        Ok(Self {
+            values: builder.values,
+        })
+    }
+
+    pub fn get(&self, id: impl AsRef<str>) -> Option<&BloonModelCacheEntry> {
+        self.values.get(id.as_ref())
+    }
+}
+
 #[derive(Clone)]
-pub struct ModelCache {
+pub struct BloonModelCacheEntry {
+    pub base_health: u64,
+
+    pub base_total_rbe: u64,
+    pub base_total_worth: u64,
+}
+
+impl BloonModelCacheEntry {
+    pub fn worth(&self, round: u64) -> f32 {
+        let multiplier = match round {
+            ..=50 => 1.0,
+            ..=60 => 0.5,
+            ..=85 => 0.2,
+            ..=100 => 0.1,
+            ..=120 => 0.05,
+            _ => 0.02,
+        };
+
+        self.base_total_worth as f32 * multiplier
+    }
+}
+
+#[derive(Clone)]
+pub struct UpgradeModelCache {
     upgrades: HashMap<String, UpgradeModel>,
 }
 
-impl ModelCache {
-    pub fn load(model: &GameModel) -> Result<ModelCache> {
+impl UpgradeModelCache {
+    pub fn load(model: &GameModel) -> Result<UpgradeModelCache> {
         let mut upgrades = HashMap::new();
 
         for upgrade_model in model.upgrades()?.iter()? {
@@ -121,7 +202,7 @@ impl ModelCache {
 #[derive(Clone)]
 pub struct BloonsGame {
     ingame_addr: Previous<u64>,
-    model_cache: Option<ModelCache>,
+    model_cache: Option<UpgradeModelCache>,
 
     memory: ProcessMemoryView,
     module_offset: u64,
@@ -207,7 +288,7 @@ impl BloonsGame {
                 let model_cache = match self.model_cache.as_ref() {
                     Some(m) => m,
                     None => {
-                        self.model_cache = Some(ModelCache::load(
+                        self.model_cache = Some(UpgradeModelCache::load(
                             &ingame.unity_to_simulation()?.simulation()?.model()?,
                         )?);
                         self.model_cache.as_ref().unwrap()

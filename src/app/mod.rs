@@ -1,4 +1,5 @@
 use std::{
+    fs::File,
     iter,
     sync::mpsc::{self, SyncSender},
     thread,
@@ -14,13 +15,14 @@ use ratatui::{
 use windows::{
     core::{s, PCSTR},
     Win32::UI::{
-        Input::KeyboardAndMouse::{EnableWindow, SetActiveWindow, SetCapture, SetFocus},
+        Input::KeyboardAndMouse::{SetActiveWindow, SetCapture, SetFocus},
         WindowsAndMessaging::{FindWindowA, GetForegroundWindow, SetForegroundWindow},
     },
 };
 
 use crate::{
     btd::{
+        log::{GameLog, GameLogState},
         summary::{GameSummary, InGameSummary, Tower},
         BloonsGame, BloonsHistogram,
     },
@@ -92,7 +94,7 @@ impl SummaryThread {
                     win32_util::beep();
                 }
 
-                if is_pause(a) && !is_pause(b) {
+                if should_pause(a) && !should_pause(b) {
                     unsafe {
                         let hwnd = FindWindowA(PCSTR::null(), s!("BloonsTD6-Epic"));
 
@@ -123,6 +125,48 @@ impl SummaryThread {
 
             thread::sleep(Duration::from_millis(25));
         }
+    }
+}
+
+struct GameLogThread {
+    out: SyncSender<AppEvent>,
+    game: BloonsGame,
+}
+
+impl GameLogThread {
+    fn new(out: SyncSender<AppEvent>, game: BloonsGame) -> Self {
+        Self { out, game }
+    }
+
+    fn run(&mut self) -> Result<()> {
+        let mut state = GameLogState::default();
+        let mut log = GameLog::default();
+
+        loop {
+            std::thread::sleep(Duration::from_millis(100));
+
+            if let Ok(new_state) = self.get_state() {
+                if new_state.towers.is_empty() {
+                    log = GameLog::default();
+                }
+
+                log.update(&state, &new_state);
+                state = new_state;
+
+                let out = File::create(format!("log/{}.json", state.label))?;
+                serde_json::to_writer_pretty(out, &log)?;
+            }
+        }
+    }
+
+    fn get_state(&self) -> Result<GameLogState> {
+        let Some(ingame) = self.game.get_ingame()? else {
+            return Err("not ingame".into());
+        };
+
+        let simulation = ingame.unity_to_simulation()?.simulation()?;
+
+        Ok(GameLogState::load(&simulation)?)
     }
 }
 
@@ -160,8 +204,8 @@ impl BloonsThread {
     }
 }
 
-fn is_pause(summary: &InGameSummary) -> bool {
-    summary.danger.is_some_and(|d| d < 30.0)
+fn should_pause(summary: &InGameSummary) -> bool {
+    summary.danger.is_some_and(|d| d < 50.0) && summary.mode != "Clicks"
 }
 
 #[derive(Debug)]
@@ -181,8 +225,11 @@ impl App {
         let (send, recv) = mpsc::sync_channel(8);
 
         let mut game_thread = SummaryThread::new(send.clone(), game.clone());
+        let mut log_thread = GameLogThread::new(send.clone(), game.clone());
+
         let input_thread = InputThread::new(send.clone());
 
+        thread::spawn(move || log_thread.run().unwrap());
         thread::spawn(move || game_thread.run().unwrap());
         thread::spawn(move || input_thread.run().unwrap());
 
@@ -352,7 +399,7 @@ impl Widget for &InGameSummary {
             ])
             .split(area);
 
-        Line::from(format!("{} {}", self.map_name, self.mode)).render(layout[0], buf);
+        Line::from(format!("{} {} {}", self.map_name, self.mode, self.seed)).render(layout[0], buf);
 
         let top = Layout::default()
             .direction(Direction::Horizontal)
