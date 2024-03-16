@@ -1,4 +1,7 @@
+use std::{collections::HashMap, ops::Range, sync::{Arc, Mutex}};
+
 use byteorder::{ByteOrder, NativeEndian};
+use windows::Win32::System::Memory::MEMORY_BASIC_INFORMATION;
 
 use crate::{Process, Result};
 
@@ -140,14 +143,18 @@ macro_rules! object_type {
 pub(crate) use count;
 pub(crate) use object_type;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ProcessMemoryView {
     process: Process,
+    pages: Arc<Mutex<Vec<(Range<u64>, Vec<u8>)>>>,
 }
 
 impl ProcessMemoryView {
     pub fn new(process: Process) -> Self {
-        Self { process }
+        let pages = Vec::new();
+        let pages = Arc::new(Mutex::new(pages));
+
+        Self { process, pages }
     }
 
     pub fn read<T: MemoryRead>(&self, address: u64) -> Result<T> {
@@ -155,7 +162,41 @@ impl ProcessMemoryView {
     }
 
     pub fn read_bytes(&self, address: u64, buffer: &mut [u8]) -> Result<usize> {
-        self.process.read_memory(address, buffer)
+        let mut pages = self.pages.lock().unwrap();
+
+        let index = match pages.binary_search_by_key(&address, |v| v.0.end) {
+            Ok(index) => index,
+            Err(index) => index,
+        };
+
+        if index == pages.len() || !pages[index].0.contains(&address) {
+            unsafe {
+                let mut info = MEMORY_BASIC_INFORMATION::default();
+
+                windows::Win32::System::Memory::VirtualQueryEx(
+                    self.process.handle,
+                    Some(address as _),
+                    &mut info as *mut _ as _,
+                    std::mem::size_of_val(&info),
+                );
+
+                // println!("{:#?}", info);
+
+                let base = info.BaseAddress as u64;
+
+                let mut content = vec![0; info.RegionSize];
+                self.process.read_memory(base, &mut content)?;
+
+                pages.insert(index, (base..base + info.RegionSize as u64, content));
+            }
+        }
+
+        let offset = (address - pages[index].0.start) as usize;
+        let len = buffer.len().min((pages[index].0.end - address) as usize);
+
+        buffer[0..len].copy_from_slice(&pages[index].1[offset..offset + len]);
+
+        Ok(len)
     }
 
     pub fn read_exact(&self, address: u64, out: &mut [u8]) -> Result<()> {

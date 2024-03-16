@@ -10,14 +10,13 @@ use crate::{
     Previous, Result,
 };
 
+pub mod interface;
 pub mod log;
-pub mod summary;
 pub mod types;
 use types::{GameModel, InGame, Tower, UpgradeModel};
 
 use self::{
-    summary::{GameSummary, InGameSummary},
-    types::{BloonModel, UpgradePathModel},
+    interface::{GameState, InGameState}, types::{BloonModel, UpgradePathModel}
 };
 
 pub fn find_pid() -> Result<u32> {
@@ -268,36 +267,36 @@ impl BloonsGame {
         }
     }
 
-    pub fn get_summary(&mut self) -> GameSummary {
-        let state = match self.try_get_summary() {
+    pub fn get_state(&mut self) -> GameState {
+        let state = match self.try_get_state() {
             Ok(s) => s,
-            Err(_) => GameSummary::None,
+            Err(_) => GameState::None,
         };
 
         state
     }
 
-    pub fn try_get_summary(&mut self) -> Result<GameSummary> {
+    pub fn try_get_state(&mut self) -> Result<GameState> {
         match self.get_ingame()? {
-            None => Ok(GameSummary::None),
+            None => Ok(GameState::None),
             Some(ingame) => {
-                if self.ingame_addr.set(ingame.0.address) {
-                    self.model_cache = None;
-                }
+                // if self.ingame_addr.set(ingame.0.address) {
+                //     self.model_cache = None;
+                // }
 
-                let model_cache = match self.model_cache.as_ref() {
-                    Some(m) => m,
-                    None => {
-                        self.model_cache = Some(UpgradeModelCache::load(
-                            &ingame.unity_to_simulation()?.simulation()?.model()?,
-                        )?);
-                        self.model_cache.as_ref().unwrap()
-                    }
-                };
+                // let model_cache = match self.model_cache.as_ref() {
+                //     Some(m) => m,
+                //     None => {
+                //         self.model_cache = Some(UpgradeModelCache::load(
+                //             &ingame.unity_to_simulation()?.simulation()?.model()?,
+                //         )?);
+                //         self.model_cache.as_ref().unwrap()
+                //     }
+                // };
 
-                let state = InGameSummary::load(model_cache, &ingame)?;
+                let state = InGameState::load(&ingame)?;
 
-                Ok(GameSummary::InGame(state))
+                Ok(GameState::InGame(state))
             }
         }
     }

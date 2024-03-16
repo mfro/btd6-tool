@@ -7,7 +7,7 @@ mod win32_util;
 use std::{
     collections::{HashMap, HashSet},
     fs::File,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use app::App;
@@ -17,6 +17,13 @@ use btd::{
 };
 use process::Process;
 use serde::{Deserialize, Serialize};
+use windows::Win32::System::{
+    Memory::{
+        MemoryRegionInfo, QueryVirtualMemoryInformation, MEMORY_BASIC_INFORMATION,
+        WIN32_MEMORY_REGION_INFORMATION,
+    },
+    Threading::PROCESS_QUERY_INFORMATION,
+};
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -43,17 +50,59 @@ impl<T: PartialEq> Previous<T> {
     }
 }
 
+pub trait TryMap<T1, E> {
+    fn and_then_map<T2>(
+        self,
+        f: impl FnMut(T1) -> std::result::Result<T2, E>,
+    ) -> impl Iterator<Item = std::result::Result<T2, E>>;
+}
+
+impl<T1, E, I> TryMap<T1, E> for I
+where
+    I: Iterator<Item = std::result::Result<T1, E>>,
+{
+    fn and_then_map<T2>(
+        self,
+        mut f: impl FnMut(T1) -> std::result::Result<T2, E>,
+    ) -> impl Iterator<Item = std::result::Result<T2, E>> {
+        self.map(move |v| v.and_then(|v| f(v)))
+    }
+}
+
 fn main() -> Result<()> {
     if std::env::args().nth(1).is_some_and(|v| v == "test") {
-        let game = BloonsGame::find_game()?;
+        // unsafe {
+        //     let pid = btd::find_pid()?;
+        //     let process = Process::from_pid(pid, PROCESS_QUERY_INFORMATION)?;
 
-        let Some(ingame) = game.get_ingame()? else {
-            return Err("not ingame".into());
-        };
+        //     let mut info = MEMORY_BASIC_INFORMATION::default();
 
-        let simulation = ingame.unity_to_simulation()?.simulation()?;
+        //     // 1865361014784
+        //     // 1865492201472
 
-        println!("{}", simulation.model()?.random_seed()?);
+        //     windows::Win32::System::Memory::VirtualQueryEx(
+        //         process.handle,
+        //         Some(1865361014784usize as _),
+        //         &mut info as *mut _ as _,
+        //         std::mem::size_of_val(&info),
+        //     );
+
+        //     println!("{:#?}", info);
+        // }
+
+        let mut game = BloonsGame::find_game()?;
+
+        let t0 = Instant::now();
+        std::hint::black_box(game.try_get_state()?);
+        println!("{:?}", t0.elapsed());
+
+        // let Some(ingame) = game.get_ingame()? else {
+        //     return Err("not ingame".into());
+        // };
+
+        // let simulation = ingame.unity_to_simulation()?.simulation()?;
+
+        // println!("{}", simulation.model()?.random_seed()?);
 
         // println!(
         //     "{} {} {}",

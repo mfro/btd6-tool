@@ -22,8 +22,9 @@ use windows::{
 
 use crate::{
     btd::{
+        interface::{GameState, InGameState},
         log::{GameLog, GameLogState},
-        summary::{GameSummary, InGameSummary, Tower},
+        types::TowerSet,
         BloonsGame, BloonsHistogram,
     },
     win32_util, Previous, Result,
@@ -32,7 +33,7 @@ use crate::{
 mod tui;
 
 enum AppEvent {
-    Summary(GameSummary),
+    State(GameState),
     Exit,
 }
 
@@ -76,19 +77,23 @@ impl SummaryThread {
         let mut previous = Previous::default();
 
         loop {
-            let state = self.game.get_summary();
+            let state = self.game.get_state();
 
-            if let (GameSummary::InGame(a), Some(GameSummary::InGame(b))) =
-                (&state, &previous.value)
-            {
+            if let (GameState::InGame(a), Some(GameState::InGame(b))) = (&state, &previous.value) {
                 let do_beep = a
-                    .upgrades
+                    .towers
                     .iter()
-                    .filter(|up| match a.selected_index {
-                        Some(i) => i == up.tower_index,
+                    .enumerate()
+                    .filter(|(i, tower)| match a.selected_tower {
+                        Some(v) => v == *i,
                         None => true,
                     })
-                    .any(|upgrade| (b.cash..a.cash).contains(&upgrade.cost));
+                    .any(|(_, tower)| {
+                        a.model.towers.towers[tower.kind]
+                            .available_upgrades
+                            .iter()
+                            .any(|i| (b.cash..a.cash).contains(&a.model.upgrades.upgrades[*i].cost))
+                    });
 
                 if do_beep {
                     win32_util::beep();
@@ -120,7 +125,7 @@ impl SummaryThread {
             }
 
             if previous.set(state.clone()) {
-                self.out.send(AppEvent::Summary(state))?;
+                self.out.send(AppEvent::State(state))?;
             }
 
             thread::sleep(Duration::from_millis(25));
@@ -204,8 +209,12 @@ impl BloonsThread {
     }
 }
 
-fn should_pause(summary: &InGameSummary) -> bool {
-    summary.danger.is_some_and(|d| d < 50.0) && summary.mode != "Clicks"
+fn should_pause(summary: &InGameState) -> bool {
+    summary
+        .paths
+        .iter()
+        .any(|p| p.bloons.iter().any(|b| b.leak_distance < 50.0))
+        && summary.model.game_mode != "Clicks"
 }
 
 #[derive(Debug)]
@@ -235,7 +244,7 @@ impl App {
 
         while let Ok(event) = recv.recv() {
             match event {
-                AppEvent::Summary(state) => self.render(&mut terminal, state)?,
+                AppEvent::State(state) => self.render(&mut terminal, state)?,
 
                 AppEvent::Exit => break,
             }
@@ -246,17 +255,17 @@ impl App {
         Ok(())
     }
 
-    fn render(&self, terminal: &mut tui::Tui, summary: GameSummary) -> Result<()> {
+    fn render(&self, terminal: &mut tui::Tui, summary: GameState) -> Result<()> {
         terminal.draw(|frame| frame.render_widget(&summary, frame.size()))?;
 
         Ok(())
     }
 }
 
-impl Widget for &GameSummary {
+impl Widget for &GameState {
     fn render(self, area: Rect, buf: &mut Buffer) {
         match self {
-            GameSummary::None => {
+            GameState::None => {
                 let title = Title::from(" Not in game ".bold());
 
                 Block::default()
@@ -266,39 +275,41 @@ impl Widget for &GameSummary {
                     .render(area, buf);
             }
 
-            GameSummary::InGame(state) => {
+            GameState::InGame(state) => {
                 state.render(area, buf);
             }
         }
     }
 }
 
-fn render_towers_table(area: Rect, buf: &mut Buffer, state: &InGameSummary) {
+fn render_towers_table(area: Rect, buf: &mut Buffer, state: &InGameState) {
     let rows: Vec<Row<'_>> = state
         .towers
         .iter()
         .enumerate()
         .map(|(i, tower)| {
-            let style = if Some(i) == state.selected_index {
+            let style = if Some(i) == state.selected_tower {
                 Style::new().bold()
             } else {
                 Style::new()
             };
 
-            let row = match tower {
-                Tower::Basic(tower) => Row::new([
+            let kind = &state.model.towers.towers[tower.kind];
+
+            let row = match kind.set {
+                TowerSet::HERO => Row::new([
+                    Text::raw(format!("${}", tower.worth)).alignment(Alignment::Right),
+                    Text::raw(format!("{}", kind.tiers[0])).alignment(Alignment::Right),
+                    Text::raw(format!("{}", kind.id)),
+                ]),
+
+                _ => Row::new([
                     Text::raw(format!("${}", tower.worth)).alignment(Alignment::Right),
                     Text::raw(format!(
                         "{}-{}-{}",
-                        tower.tiers[0], tower.tiers[1], tower.tiers[2]
+                        kind.tiers[0], kind.tiers[1], kind.tiers[2]
                     )),
-                    Text::raw(format!("{}", tower.name)),
-                ]),
-
-                Tower::Hero(hero) => Row::new([
-                    Text::raw(format!("${}", hero.worth)).alignment(Alignment::Right),
-                    Text::raw(format!("{}", hero.level)).alignment(Alignment::Right),
-                    Text::raw(format!("{}", hero.name)),
+                    Text::raw(format!("{}", kind.id)),
                 ]),
             };
 
@@ -318,18 +329,28 @@ fn render_towers_table(area: Rect, buf: &mut Buffer, state: &InGameSummary) {
     Widget::render(table, area, buf);
 }
 
-fn render_upgrades_table(area: Rect, buf: &mut Buffer, state: &InGameSummary) {
-    let index = state
-        .upgrades
+fn render_upgrades_table(area: Rect, buf: &mut Buffer, state: &InGameState) {
+    let upgrades = state
+        .towers
         .iter()
-        .position(|s| s.cost > state.cash)
-        .unwrap_or(state.upgrades.len());
+        .enumerate()
+        .flat_map(|(i, tower)| {
+            state.model.towers.towers[tower.kind]
+                .available_upgrades
+                .iter()
+                .map(move |i2| (i, &state.model.upgrades.upgrades[*i2]))
+        })
+        .collect::<Vec<_>>();
 
-    let rows: Vec<Row<'_>> = state
-        .upgrades
+    let index = upgrades
+        .iter()
+        .position(|s| s.1.cost > state.cash)
+        .unwrap_or(upgrades.len());
+
+    let rows: Vec<Row<'_>> = upgrades
         .iter()
         .map(|upgrade| {
-            let style = if Some(upgrade.tower_index) == state.selected_index {
+            let style = if Some(upgrade.0) == state.selected_tower {
                 Style::new().bold()
             } else {
                 Style::new()
@@ -337,8 +358,8 @@ fn render_upgrades_table(area: Rect, buf: &mut Buffer, state: &InGameSummary) {
 
             Row::new([
                 // Text::raw(format!("{}", upgrade.tower_index)),
-                Text::raw(format!("${}", upgrade.cost)).alignment(Alignment::Right),
-                Text::raw(format!("{}", upgrade.name)),
+                Text::raw(format!("${}", upgrade.1.cost)).alignment(Alignment::Right),
+                Text::raw(format!("{}", upgrade.1.id)),
             ])
             .style(style)
         })
@@ -370,23 +391,40 @@ fn render_upgrades_table(area: Rect, buf: &mut Buffer, state: &InGameSummary) {
     Widget::render(table, area, buf);
 }
 
-fn render_danger(area: Rect, buf: &mut Buffer, state: &InGameSummary) {
-    match state.danger {
-        Some(danger) => {
+fn render_danger(area: Rect, buf: &mut Buffer, state: &InGameState) {
+    let danger = state
+        .paths
+        .iter()
+        .filter_map(|p| {
+            p.bloons
+                .iter()
+                .map(|b| b.leak_distance)
+                .max_by(f32::total_cmp)
+        })
+        .max_by(f32::total_cmp);
+
+    let max_path = state
+        .paths
+        .iter()
+        .map(|p| p.leak_distance)
+        .max_by(f32::total_cmp);
+
+    match (danger, max_path) {
+        (Some(danger), Some(max_path)) => {
             let width = area.width - 1;
 
-            let right = (danger / state.max_path * width as f32) as usize;
+            let right = (danger / max_path * width as f32) as usize;
             let left = width as usize - right;
 
             let text = "-".repeat(left) + "O" + &" ".repeat(right);
 
             Line::from(text).render(area, buf);
         }
-        None => {}
+        _ => {}
     }
 }
 
-impl Widget for &InGameSummary {
+impl Widget for &InGameState {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let area = Rect::new(area.x, area.y, 80, area.height);
 
@@ -399,21 +437,18 @@ impl Widget for &InGameSummary {
             ])
             .split(area);
 
-        Line::from(format!("{} {} {}", self.map_name, self.mode, self.seed)).render(layout[0], buf);
+        Line::from(format!(
+            "{} {} {}",
+            self.model.map_name, self.model.game_mode, self.model.seed
+        ))
+        .render(layout[0], buf);
 
         let top = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(layout[1]);
 
-        let total = self
-            .towers
-            .iter()
-            .map(|t| match t {
-                Tower::Basic(t) => t.worth,
-                Tower::Hero(t) => t.worth,
-            })
-            .sum::<u64>();
+        let total = self.towers.iter().map(|t| t.worth).sum::<f32>() as u64;
 
         let danger_track =
             Block::default().borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT);

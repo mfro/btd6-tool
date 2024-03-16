@@ -396,18 +396,35 @@ impl CSharpString {
     }
 }
 
-impl Display for CSharpString {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let len = self.len().unwrap();
+impl TryFrom<&CSharpString> for String {
+    type Error = Box<dyn std::error::Error>;
+
+    fn try_from(value: &CSharpString) -> Result<Self> {
+        let len = value.len()?;
 
         let mut data = vec![0; 2 * len];
-        self.0
+        value
+            .0
             .memory
-            .read_exact(self.0.address + 0x0014, &mut data)
-            .unwrap();
+            .read_exact(value.0.address + 0x0014, &mut data)?;
 
-        let str = String::from_utf16(cast_slice(&data)).unwrap();
+        let str = String::from_utf16(cast_slice(&data))?;
 
+        Ok(str)
+    }
+}
+
+impl TryFrom<CSharpString> for String {
+    type Error = Box<dyn std::error::Error>;
+
+    fn try_from(value: CSharpString) -> Result<Self> {
+        Self::try_from(&value)
+    }
+}
+
+impl Display for CSharpString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str: String = self.try_into().expect("to_string");
         Display::fmt(&str, f)
     }
 }

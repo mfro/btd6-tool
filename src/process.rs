@@ -16,7 +16,7 @@ use crate::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Process {
-    handle: HANDLE,
+    pub handle: HANDLE,
 }
 
 impl Process {
