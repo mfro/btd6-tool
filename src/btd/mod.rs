@@ -10,14 +10,16 @@ use crate::{
     Previous, Result,
 };
 
+pub mod extensions;
 pub mod log;
 pub mod summary;
 pub mod types;
-use types::{GameModel, InGame, Tower, UpgradeModel};
 
 use self::{
     summary::{GameSummary, InGameSummary},
-    types::{BloonModel, UpgradePathModel},
+    types::{
+        BloonModel, BloonTargetProxy, GameModel, InGame, Tower, UpgradeModel, UpgradePathModel,
+    },
 };
 
 pub fn find_pid() -> Result<u32> {
@@ -271,7 +273,10 @@ impl BloonsGame {
     pub fn get_summary(&mut self) -> GameSummary {
         let state = match self.try_get_summary() {
             Ok(s) => s,
-            Err(_) => GameSummary::None,
+            Err(e) => {
+                // eprintln!("{:?}", e);
+                GameSummary::None
+            }
         };
 
         state
@@ -322,7 +327,7 @@ pub struct Bloon {
 }
 
 impl Bloon {
-    fn load(bloon: types::BloonTargetProxy) -> Result<Bloon> {
+    fn load(bloon: BloonTargetProxy) -> Result<Bloon> {
         let kind = bloon.bloon.model()?.base_id()?.to_string();
         let distance = bloon.bloon.distance_travelled()?;
 
