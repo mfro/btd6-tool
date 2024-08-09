@@ -18,7 +18,7 @@ macro_rules! pointer_type {
             fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
                 match view.read::<Option<$ty>>(address)? {
                     Some(v) => Ok(v),
-                    None => Err(format!("expected {}", stringify!($ty)).into()),
+                    None => anyhow::bail!(format!("expected {}", stringify!($ty))),
                 }
             }
         }
@@ -92,7 +92,7 @@ macro_rules! object_type {
         }
 
         impl<$( $generic: MemoryRead ),*> TryFrom<Pointer> for $ty<$( $generic ),*> {
-            type Error = Box<dyn std::error::Error>;
+            type Error = anyhow::Error;
 
             fn try_from(value: Pointer) -> Result<Self> {
                 let expected_type_name = match crate::memory::count!( $( $generic )* ) {
@@ -101,7 +101,7 @@ macro_rules! object_type {
                 };
 
                 if value.address == 0 {
-                    return Err(format!("Expected {} got null", expected_type_name).into());
+                    anyhow::bail!("Expected {} got null", expected_type_name);
                 }
 
                 let value = Self(value, std::default::Default::default());
@@ -115,12 +115,11 @@ macro_rules! object_type {
                 };
 
                 if !correct {
-                    return Err(format!(
+                    anyhow::bail!(
                         "Expected {} got {}",
                         expected_type_name,
                         value.get_type()?.get_name()?
-                    )
-                    .into());
+                    );
                 }
 
                 Ok(value)
@@ -308,7 +307,7 @@ impl TypeStatics {
 
 pointer_type!(Object);
 impl TryFrom<Pointer> for Object {
-    type Error = Box<dyn std::error::Error>;
+    type Error = anyhow::Error;
 
     fn try_from(value: Pointer) -> Result<Self> {
         Ok(Self(value))
@@ -330,7 +329,7 @@ impl AsRef<Pointer> for Object {
 impl ObjectPointer for Object {}
 
 pub trait ObjectPointer:
-    Sized + TryFrom<Pointer, Error = Box<dyn std::error::Error>> + AsRef<Pointer> + Into<Pointer>
+    Sized + TryFrom<Pointer, Error = anyhow::Error> + AsRef<Pointer> + Into<Pointer>
 {
     fn cast<T: ObjectPointer>(self) -> Result<T> {
         T::try_from(self.as_ref().clone())

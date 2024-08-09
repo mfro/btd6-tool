@@ -31,7 +31,7 @@ impl GameLogState {
         let mut towers = HashMap::new();
 
         for tower in sim.map()?.towers()? {
-            if tower.entity()?.is_some() && tower.parent_tower_id()? == ObjectId::INVALID {
+            if tower.base().entity()?.is_some() && tower.parent_tower_id()? == ObjectId::INVALID {
                 let id = tower.id()?.to_string();
                 let base_id = tower.model()?.base_id()?.to_string();
 

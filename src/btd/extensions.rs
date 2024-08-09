@@ -1,5 +1,7 @@
 #![allow(non_camel_case_types, dead_code)]
 
+use anyhow::bail;
+
 use crate::{
     memory::{ProcessMemoryView, TypeInfo},
     Result,
@@ -10,7 +12,7 @@ use super::types::*;
 // https://github.com/Perfare/Il2CppDumper
 // .\Il2CppDumper.exe 'E:\ephemeral\games\Epic Games\BloonsTD6\GameAssembly.dll' 'E:\ephemeral\games\Epic Games\BloonsTD6\BloonsTD6_Data\il2cpp_data\Metadata\global-metadata.dat'
 // cat script.json | jq '.ScriptMetadata[] | select(.Name == "Assets.Scripts.Unity.UI_New.InGame.InGame_TypeInfo") | .Address'
-const TYPE_OFFSET_IN_GAME: u64 = 55228248;
+const TYPE_OFFSET_IN_GAME: u64 = 55245400;
 
 impl InGame {
     pub fn get_instance(
@@ -29,7 +31,7 @@ impl Simulation {
     pub fn cash_manager(&self) -> Result<CashManager> {
         let cash_managers = self.cash_managers()?;
         if cash_managers.len()? != 1 {
-            Err("cash manager count".into())
+            bail!("cash manager count")
         } else {
             Ok(cash_managers.get(0)?.1)
         }

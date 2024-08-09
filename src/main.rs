@@ -10,6 +10,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::bail;
 use app::App;
 use btd::{
     types::{ObjectId, Simulation},
@@ -18,7 +19,7 @@ use btd::{
 use process::Process;
 use serde::{Deserialize, Serialize};
 
-pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub type Result<T> = anyhow::Result<T>;
 
 #[derive(Clone)]
 struct Previous<T> {
@@ -48,7 +49,7 @@ fn main() -> Result<()> {
         let game = BloonsGame::find_game()?;
 
         let Some(ingame) = game.get_ingame()? else {
-            return Err("not ingame".into());
+            bail!("not ingame");
         };
 
         let simulation = ingame.unity_to_simulation()?.simulation()?;

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use anyhow::bail;
 use windows::Win32::System::Threading::{
     PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
 };
@@ -33,7 +34,7 @@ pub fn find_pid() -> Result<u32> {
         }
     }
 
-    Err("bloons process not found".into())
+    bail!("bloons process not found")
 }
 
 pub fn find_game_module(process: &Process) -> Result<Module> {
@@ -45,7 +46,7 @@ pub fn find_game_module(process: &Process) -> Result<Module> {
         }
     }
 
-    Err("module not found".into())
+    bail!("module not found")
 }
 
 pub fn get_cash(ingame: &InGame) -> Result<u64> {
@@ -187,7 +188,7 @@ impl UpgradeModelCache {
         for upgrade_model in model.upgrades()?.iter()? {
             let upgrade_model = upgrade_model?;
 
-            upgrades.insert(upgrade_model.name()?.to_string(), upgrade_model);
+            upgrades.insert(upgrade_model.base().name()?.to_string(), upgrade_model);
         }
 
         Ok(Self { upgrades })
@@ -274,7 +275,7 @@ impl BloonsGame {
         let state = match self.try_get_summary() {
             Ok(s) => s,
             Err(e) => {
-                // eprintln!("{:?}", e);
+                eprintln!("{:?}", e);
                 GameSummary::None
             }
         };

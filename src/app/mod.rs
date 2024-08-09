@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::bail;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
     prelude::*,
@@ -161,7 +162,7 @@ impl GameLogThread {
 
     fn get_state(&self) -> Result<GameLogState> {
         let Some(ingame) = self.game.get_ingame()? else {
-            return Err("not ingame".into());
+            bail!("not ingame");
         };
 
         let simulation = ingame.unity_to_simulation()?.simulation()?;
