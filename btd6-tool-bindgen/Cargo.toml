@@ -1,0 +1,15 @@
+[package]
+name = "btd6-tool-bindgen"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+anyhow = "1.0.86"
+assert_matches = "1.5.0"
+proc-macro2 = "1.0.86"
+quote = "1.0.36"
+regex = "1.10.6"
+syn = { version = "2.0.72", features = ["full"]}

@@ -1,2 +1,4 @@
 /target
-/log
+/btd6-tool/log
+/btd6-tool-bindgen/dump.cs
+/btd6-tool-bindgen/script.json

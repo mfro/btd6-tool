@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 
 use anyhow::bail;
@@ -188,7 +190,7 @@ impl UpgradeModelCache {
         for upgrade_model in model.upgrades()?.iter()? {
             let upgrade_model = upgrade_model?;
 
-            upgrades.insert(upgrade_model.base().name()?.to_string(), upgrade_model);
+            upgrades.insert(upgrade_model.name()?.to_string(), upgrade_model);
         }
 
         Ok(Self { upgrades })

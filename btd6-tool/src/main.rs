@@ -4,20 +4,10 @@ mod memory;
 mod process;
 mod win32_util;
 
-use std::{
-    collections::{HashMap, HashSet},
-    fs::File,
-    time::Duration,
-};
-
 use anyhow::bail;
 use app::App;
-use btd::{
-    types::{ObjectId, Simulation},
-    BloonModelCache, BloonsGame,
-};
+use btd::BloonsGame;
 use process::Process;
-use serde::{Deserialize, Serialize};
 
 pub type Result<T> = anyhow::Result<T>;
 

@@ -1,5 +1,3 @@
-#![allow(non_camel_case_types, dead_code)]
-
 use anyhow::bail;
 
 use crate::{

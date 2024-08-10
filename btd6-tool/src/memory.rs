@@ -15,7 +15,7 @@ macro_rules! pointer_type {
         impl crate::memory::MemoryRead for $ty {
             const SIZE: usize = 8;
 
-            fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+            fn read(view: &ProcessMemoryView, address: u64) -> crate::Result<Self> {
                 match view.read::<Option<$ty>>(address)? {
                     Some(v) => Ok(v),
                     None => anyhow::bail!(format!("expected {}", stringify!($ty))),
@@ -26,7 +26,7 @@ macro_rules! pointer_type {
         impl crate::memory::MemoryRead for Option<$ty> {
             const SIZE: usize = 8;
 
-            fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+            fn read(view: &ProcessMemoryView, address: u64) -> crate::Result<Self> {
                 let value: Pointer = view.read(address)?;
                 if value.address == 0 {
                     Ok(None)
@@ -65,7 +65,7 @@ macro_rules! object_type {
         impl<$( $generic: MemoryRead ),*> crate::memory::MemoryRead for $ty<$( $generic ),*> {
             const SIZE: usize = crate::memory::Pointer::SIZE;
 
-            fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+            fn read(view: &ProcessMemoryView, address: u64) -> crate::Result<Self> {
                 view.read::<Pointer>(address).and_then($ty::try_from)
             }
         }
@@ -73,7 +73,7 @@ macro_rules! object_type {
         impl<$( $generic: MemoryRead ),*> crate::memory::MemoryRead for Option<$ty<$( $generic ),*>> {
             const SIZE: usize = crate::memory::Pointer::SIZE;
 
-            fn read(view: &ProcessMemoryView, address: u64) -> Result<Self> {
+            fn read(view: &ProcessMemoryView, address: u64) -> crate::Result<Self> {
                 let pointer: crate::memory::Pointer = view.read(address)?;
                 (pointer.address != 0).then(|| $ty::try_from(pointer)).transpose()
             }
@@ -94,7 +94,7 @@ macro_rules! object_type {
         impl<$( $generic: MemoryRead ),*> TryFrom<Pointer> for $ty<$( $generic ),*> {
             type Error = anyhow::Error;
 
-            fn try_from(value: Pointer) -> Result<Self> {
+            fn try_from(value: Pointer) -> crate::Result<Self> {
                 let expected_type_name = match crate::memory::count!( $( $generic )* ) {
                     0 => $name.to_string(),
                     _ => format!("{}`{}", $name, crate::memory::count!( $( $generic )* )),

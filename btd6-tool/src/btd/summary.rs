@@ -41,7 +41,7 @@ impl InGameSummary {
         let mut towers = vec![];
 
         for tower in sim.map()?.towers()? {
-            if tower.base().entity()?.is_some() && tower.parent_tower_id()? == ObjectId::INVALID {
+            if tower.entity()?.is_some() && tower.parent_tower_id()? == ObjectId::INVALID {
                 if tower.model()?.tower_set()? == TowerSet::HERO {
                     towers.push(Tower::Hero(Hero::load(&tower)?));
                 } else {
@@ -190,7 +190,7 @@ impl Upgrade {
         let path = upgrade.path()?.try_into()?;
         let tier = upgrade.tier()?.try_into()?;
         let cost = upgrade.cost()?.try_into()?;
-        let name = upgrade.base().name()?.to_string();
+        let name = upgrade.name()?.to_string();
 
         Ok(Self {
             tower_index,
