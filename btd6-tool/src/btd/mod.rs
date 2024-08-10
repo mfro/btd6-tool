@@ -277,8 +277,8 @@ impl BloonsGame {
         let state = match self.try_get_summary() {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("{:?}", e);
-                GameSummary::None
+                let str = e.to_string();
+                GameSummary::None(str)
             }
         };
 
@@ -287,7 +287,7 @@ impl BloonsGame {
 
     pub fn try_get_summary(&mut self) -> Result<GameSummary> {
         match self.get_ingame()? {
-            None => Ok(GameSummary::None),
+            None => Ok(GameSummary::None("null game".into())),
             Some(ingame) => {
                 if self.ingame_addr.set(ingame.0.address) {
                     self.model_cache = None;

@@ -257,14 +257,18 @@ impl App {
 impl Widget for &GameSummary {
     fn render(self, area: Rect, buf: &mut Buffer) {
         match self {
-            GameSummary::None => {
+            GameSummary::None(e) => {
                 let title = Title::from(" Not in game ".bold());
 
-                Block::default()
+                let block = Block::default()
                     .title(title.alignment(Alignment::Center))
                     .borders(Borders::ALL)
-                    .border_set(border::THICK)
-                    .render(area, buf);
+                    .border_set(border::THICK);
+
+                let text = Text::raw(e);
+                text.render(block.inner(area), buf);
+
+                block.render(area, buf);
             }
 
             GameSummary::InGame(state) => {
