@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::types::{ObjectId, Simulation};
+use super::types::Simulation;
 use crate::Result;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -31,7 +31,7 @@ impl GameLogState {
         let mut towers = HashMap::new();
 
         for tower in sim.map()?.towers()? {
-            if tower.entity()?.is_some() && tower.parent_tower_id()? == ObjectId::INVALID {
+            if tower.is_real()? {
                 let id = tower.id()?.to_string();
                 let base_id = tower.model()?.base_id()?.to_string();
 

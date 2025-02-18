@@ -41,7 +41,7 @@ impl InGameSummary {
         let mut towers = vec![];
 
         for tower in sim.map()?.towers()? {
-            if tower.entity()?.is_some() && tower.parent_tower_id()? == ObjectId::INVALID {
+            if tower.is_real()? {
                 if tower.model()?.tower_set()? == TowerSet::HERO {
                     towers.push(Tower::Hero(Hero::load(&tower)?));
                 } else {
@@ -71,7 +71,7 @@ impl InGameSummary {
 
                     towers.iter().position(|t| match t {
                         Tower::Basic(t) => t.id == id,
-                        _ => false,
+                        Tower::Hero(t) => t.id == id,
                     })
                 } else {
                     None

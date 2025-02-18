@@ -10,7 +10,7 @@ use super::types::*;
 // https://github.com/Perfare/Il2CppDumper
 // .\Il2CppDumper.exe 'E:\ephemeral\games\Epic Games\BloonsTD6\GameAssembly.dll' 'E:\ephemeral\games\Epic Games\BloonsTD6\BloonsTD6_Data\il2cpp_data\Metadata\global-metadata.dat'
 // cat script.json | jq '.ScriptMetadata[] | select(.Name == "Assets.Scripts.Unity.UI_New.InGame.InGame_TypeInfo") | .Address'
-const TYPE_OFFSET_IN_GAME: u64 = 55245400;
+const TYPE_OFFSET_IN_GAME: u64 = 62363576;
 
 impl InGame {
     pub fn get_instance(
@@ -117,5 +117,11 @@ impl BloonModel {
             .sum::<Result<u64>>()?;
 
         Ok(1 + children)
+    }
+}
+
+impl Tower {
+    pub fn is_real(&self) -> Result<bool> {
+        Ok(self.area_placed_on()? != ObjectId::INVALID)
     }
 }

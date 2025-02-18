@@ -189,9 +189,9 @@ pub struct Simulation {
     #[rename = "model"]
     model: GameModel,
     #[rename = "time"]
-    time: Time,
+    time: SimulationTime,
     #[rename = "roundTime"]
-    round_time: Time,
+    round_time: SimulationTime,
     #[rename = "towerManager"]
     tower_manager: TowerManager,
     #[rename = "cashManagers"]
@@ -203,7 +203,7 @@ pub struct Simulation {
 }
 
 #[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Simulation")]
-pub struct Time {
+pub struct SimulationTime {
     #[rename = "elapsed"]
     elapsed: i32,
 }
@@ -216,7 +216,7 @@ pub struct Entity {
 
 #[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Simulation.Objects")]
 pub struct RootObject {
-    #[rename = "Id"]
+    #[rename = "<Id>k__BackingField"]
     object_id: CSharpString,
 }
 
@@ -295,7 +295,15 @@ pub struct RoundData {}
 #[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Models.Map")]
 pub struct PathModel {}
 
-#[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Simulation.Towers", base = RootBehavior)]
+#[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Simulation.Behaviors", base = RootBehavior)]
+pub struct DisplayBehavior {
+    #[rename = "DisplayCategory"]
+    display_category: u32,
+    #[rename = "processing"]
+    processing: bool,
+}
+
+#[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Simulation.Towers")]
 pub struct Tower {
     #[rename = "uniqueId"]
     id: CSharpString,
@@ -307,10 +315,10 @@ pub struct Tower {
     cash_earned: u64,
     #[rename = "appliedCash"]
     applied_cash: f32,
-    #[rename = "parentTowerId"]
-    parent_tower_id: ObjectId,
     #[rename = "towerModel"]
     model: TowerModel,
+    #[rename = "areaPlacedOn"]
+    area_placed_on: ObjectId,
 }
 
 #[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Simulation.Bloons")]
@@ -404,7 +412,13 @@ pub struct BloonEmissionModel {
 #[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Models.Rounds")]
 pub struct IncomeSetModel {}
 
-#[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Models.Bloons")]
+#[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Models.Entities")]
+pub struct EntityModel {
+    #[rename = "baseId"]
+    base_id: CSharpString,
+}
+
+#[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Models.Bloons", base = Model)]
 pub struct BloonModel {
     #[rename = "id"]
     id: CSharpString,
@@ -420,10 +434,8 @@ pub struct BloonModel {
     children: List<BloonModel>,
 }
 
-#[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Models.Towers")]
+#[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Models.Towers", base = EntityModel)]
 pub struct TowerModel {
-    #[rename = "baseId"]
-    base_id: CSharpString,
     #[rename = "tier"]
     tier: u32,
     #[rename = "tiers"]
