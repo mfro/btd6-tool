@@ -1,7 +1,7 @@
 use crate::{memory::ObjectPointer, Result};
 
 use super::{
-    types::{self, ObjectId, TowerSet, TowerToSimulation},
+    types::{self, TowerSet, TowerToSimulation},
     UpgradeModelCache,
 };
 

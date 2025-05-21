@@ -8,9 +8,9 @@ use crate::{
 use super::types::*;
 
 // https://github.com/Perfare/Il2CppDumper
-// .\Il2CppDumper.exe 'E:\ephemeral\games\Epic Games\BloonsTD6\GameAssembly.dll' 'E:\ephemeral\games\Epic Games\BloonsTD6\BloonsTD6_Data\il2cpp_data\Metadata\global-metadata.dat'
+// .\Il2CppDumper.exe "C:\Program Files\Epic Games\BloonsTD6\GameAssembly.dll" "C:\Program Files\Epic Games\BloonsTD6\BloonsTD6_Data\il2cpp_data\Metadata\global-metadata.dat"
 // cat script.json | jq '.ScriptMetadata[] | select(.Name == "Assets.Scripts.Unity.UI_New.InGame.InGame_TypeInfo") | .Address'
-const TYPE_OFFSET_IN_GAME: u64 = 62363576;
+const TYPE_OFFSET_IN_GAME: u64 = 62475920;
 
 impl InGame {
     pub fn get_instance(
