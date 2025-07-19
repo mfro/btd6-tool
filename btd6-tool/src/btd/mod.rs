@@ -277,7 +277,7 @@ impl BloonsGame {
         let state = match self.try_get_summary() {
             Ok(s) => s,
             Err(e) => {
-                let str = e.to_string();
+                let str = e.to_string() + "\n" + &e.backtrace().to_string();
                 GameSummary::None(str)
             }
         };

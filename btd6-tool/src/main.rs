@@ -39,7 +39,7 @@ fn main() -> Result<()> {
         let game = BloonsGame::find_game()?;
 
         let Some(ingame) = game.get_ingame()? else {
-            bail!("not ingame");
+            bail!("not in game");
         };
 
         let simulation = ingame.unity_to_simulation()?.simulation()?;
