@@ -39,7 +39,7 @@ pub fn find_pid() -> Result<u32> {
     bail!("bloons process not found")
 }
 
-pub fn find_game_module(process: &Process) -> Result<Module> {
+pub fn find_game_module(process: &Process) -> Result<Module<'_>> {
     for module in process.get_modules()? {
         let module_name = module.get_base_name()?;
 

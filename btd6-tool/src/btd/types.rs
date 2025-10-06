@@ -174,12 +174,36 @@ pub struct InputManager {
 pub struct UnityToSimulation {
     #[rename = "simulation"]
     simulation: Simulation,
+    #[rename = "ttss"]
+    towers: List<TowerToSimulation>,
 }
 
 #[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Unity.Bridge")]
 pub struct TowerToSimulation {
     #[rename = "tower"]
     tower: Tower,
+    #[rename = "result"]
+    abilities: List<AbilityToSimulation>,
+}
+
+#[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Unity.Bridge")]
+pub struct AbilityToSimulation {
+    #[rename = "ability"]
+    ability: Ability,
+}
+
+#[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Simulation.Towers.Behaviors.Abilities")]
+pub struct Ability {
+    #[rename = "abilityModel"]
+    model: AbilityModel,
+    #[rename = "cooldownTimeRemaining"]
+    cooldown_remaining: f32,
+}
+
+#[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Models.Towers.Behaviors.Abilities")]
+pub struct AbilityModel {
+    #[rename = "displayName"]
+    name: CSharpString,
 }
 
 #[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Simulation")]

@@ -9,6 +9,8 @@ use app::App;
 use btd::BloonsGame;
 use process::Process;
 
+use crate::memory::ObjectPointer;
+
 pub type Result<T> = anyhow::Result<T>;
 
 #[derive(Clone)]
@@ -36,15 +38,34 @@ impl<T: PartialEq> Previous<T> {
 
 fn main() -> Result<()> {
     if std::env::args().nth(1).is_some_and(|v| v == "test") {
-        let game = BloonsGame::find_game()?;
+        let mut game = BloonsGame::find_game()?;
 
         let Some(ingame) = game.get_ingame()? else {
             bail!("not in game");
         };
 
-        let simulation = ingame.unity_to_simulation()?.simulation()?;
+        let type_info = ingame.get_type()?;
 
-        println!("{}", simulation.model()?.random_seed()?);
+        let mut node = type_info;
+
+        println!("{}", node.get_name()?);
+        while let Some(base) = node.get_base_type()? {
+            println!("{}", base.get_name()?);
+            node = base;
+        }
+
+        game.try_get_summary()?;
+
+        // let simulation = ingame.unity_to_simulation()?;
+
+        // for tower in simulation.towers()?.iter()? {
+        //     let tower = tower?;
+        //     for ability in tower.abilities()?.iter()? {
+        //         let ability = ability?;
+
+        //         println!("{} {}", ability.ability()?.model()?.name()?, ability.ability()?.cooldown_remaining()?);
+        //     }
+        // }
 
         // println!(
         //     "{} {} {}",

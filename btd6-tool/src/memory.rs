@@ -95,9 +95,14 @@ macro_rules! object_type {
             type Error = anyhow::Error;
 
             fn try_from(value: Pointer) -> crate::Result<Self> {
-                let expected_type_name = match crate::memory::count!( $( $generic )* ) {
-                    0 => $name.to_string(),
-                    _ => format!("{}`{}", $name, crate::memory::count!( $( $generic )* )),
+                // TODO could actually check the generic types are correct
+                let expected_type_name = if $name == "Array" {
+                    "Array".to_string()
+                } else {
+                    match crate::memory::count!( $( $generic )* ) {
+                        0 => $name.to_string(),
+                        v => format!("{}`{}", $name, v),
+                    }
                 };
 
                 if value.address == 0 {
@@ -106,15 +111,7 @@ macro_rules! object_type {
 
                 let value = Self(value, std::default::Default::default());
 
-                let correct =
-                if $name == "Array" {
-                    // todo gross array type checking
-                    value.get_type()?.get_name()?.ends_with("[]")
-                } else {
-                    value.get_type()?.get_name()? == expected_type_name
-                };
-
-                if !correct {
+                if !value.get_type()?.is_assignable_to(&expected_type_name)? {
                     anyhow::bail!(
                         "Expected {} got {}",
                         expected_type_name,
@@ -295,6 +292,18 @@ impl TypeInfo {
 
     pub fn get_statics(&self) -> Result<TypeStatics> {
         self.0.read(0xb8)
+    }
+
+    pub fn get_base_type(&self) -> Result<Option<TypeInfo>> {
+        self.0.read(0x58)
+    }
+
+    pub fn is_assignable_to(&self, type_name: &str) -> Result<bool> {
+        Ok(self.get_name()? == type_name
+            || match self.get_base_type()? {
+                Some(base) => base.is_assignable_to(type_name)?,
+                None => false,
+            })
     }
 }
 
