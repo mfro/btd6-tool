@@ -7,7 +7,8 @@ use crate::{
 
 use super::types::*;
 
-const TYPE_OFFSET_IN_GAME: u64 = 74073584;
+// see extract.sh
+const TYPE_OFFSET_IN_GAME: u64 = 76052240;
 
 impl InGame {
     pub fn get_instance(
