@@ -63,7 +63,7 @@ impl InGameSummary {
             }
         }
 
-        let selected_index = match ingame.input_manager()?.selected()? {
+        let selected_index = match ingame.player_contexts()?.get(0)?.input_manager()?.selected()? {
             None => None,
             Some(selected) => {
                 if let Ok(selected) = selected.cast::<TowerToSimulation>() {

@@ -65,7 +65,7 @@ impl Process {
         Ok(count)
     }
 
-    pub fn get_modules(&self) -> Result<Vec<Module>> {
+    pub fn get_modules(&'_ self) -> Result<Vec<Module<'_>>> {
         let mut modules = [HMODULE::default(); 1024];
         let mut output = 0;
 

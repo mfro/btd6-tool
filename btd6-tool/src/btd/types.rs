@@ -154,10 +154,16 @@ impl TowerSet {
     pub const ITEMS: u32 = 64;
 }
 
-#[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Unity.UI_New.InGame")]
-pub struct InGame {
+#[btd6_tool_bindgen::class(rename = "PlayerContext.Context", namespace = "")]
+pub struct PlayerContext_Context {
     #[rename = "inputManager"]
     input_manager: InputManager,
+}
+
+#[btd6_tool_bindgen::class(namespace = "Assets.Scripts.Unity.UI_New.InGame")]
+pub struct InGame {
+    #[rename = "playerContexts"]
+    player_contexts: List<PlayerContext_Context>,
     #[rename = "bridge"]
     unity_to_simulation: UnityToSimulation,
     #[rename = "stoppedClockForMenuOpen"]

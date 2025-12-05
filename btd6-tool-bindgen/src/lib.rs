@@ -25,7 +25,7 @@ impl BindingGenerator {
         Self::new(DUMP.to_string())
     }
 
-    fn get_class(&self, namespace: &str, name: &str) -> Result<ClassBindingGenerator> {
+    fn get_class(&'_ self, namespace: &str, name: &str) -> Result<ClassBindingGenerator<'_>> {
         let regex = Regex::new(&format!(
             r"// Namespace: {}\n(\[.*\n)*.*class {} .*\n\{{\n((\n|\s+.+\n)*)\}}",
             regex::escape(&namespace),
@@ -50,7 +50,9 @@ impl<'a> ClassBindingGenerator<'a> {
             regex::escape(field_name),
         ))?;
 
-        let captures = regex.captures(&self.body).context("field not found")?;
+        let captures = regex
+            .captures(&self.body)
+            .context(format!("field not found: {}", field_name))?;
         let raw_value = captures.get(2).unwrap().as_str();
 
         let value = usize::from_str_radix(raw_value, 16)?;
@@ -67,6 +69,7 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let mut namespace = None;
     let mut base = None;
+    let mut rename = None;
 
     for attr in arguments.iter() {
         match attr {
@@ -85,6 +88,12 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
                         base = Some(&value.path.segments[0].ident);
                     }
 
+                    "rename" => {
+                        let value = assert_matches!(&value.value, Expr::Lit(v) => v);
+                        let literal = assert_matches!(&value.lit, Lit::Str(v) => v);
+                        rename = Some(literal.value());
+                    }
+
                     v => panic!("unknown argument: {v}"),
                 }
             }
@@ -99,8 +108,14 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let name = item.ident;
 
+    let csharp_full_name = rename.unwrap_or(name.to_string());
+    let csharp_base_name = csharp_full_name
+        .split(".")
+        .last()
+        .expect("invalid identifier");
+
     let bindgen = BindingGenerator::load();
-    let class = bindgen.get_class(&namespace, &name.to_string()).unwrap();
+    let class = bindgen.get_class(&namespace, &csharp_full_name).unwrap();
 
     let fields = item.fields.iter().map(|field| {
         let name = field.ident.as_ref().unwrap();
@@ -133,8 +148,10 @@ pub fn class(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     });
 
-    let output = quote! {
-        object_type!(#name);
+    let csharp_name = Literal::string(csharp_base_name);
+
+    let output: proc_macro2::TokenStream = quote! {
+        object_type!(#name ; #csharp_name);
 
         impl #name {
             #( #fields )*
