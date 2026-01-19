@@ -8,7 +8,7 @@ use crate::{
 use super::types::*;
 
 // see extract.sh
-const TYPE_OFFSET_IN_GAME: u64 = 76052240;
+const TYPE_OFFSET_IN_GAME: u64 = 76301008;
 
 impl InGame {
     pub fn get_instance(
@@ -32,41 +32,6 @@ impl Simulation {
             Ok(cash_managers.get(0)?.1)
         }
     }
-}
-
-impl TowerManager {
-    // pub fn tower_history(&self) -> Result<()> {
-    //     unsafe {
-    //         let list: Object = self.field(0x0090)?;
-    //         assert_eq!("List`1", list.get_type()?.get_name()?);
-
-    //         let len: u32 = list.field(0x0008)?;
-    //         println!("{}", len);
-
-    //         let array: Object = list.field(0x0000)?;
-    //         println!("{:?}", array.get_type()?.get_name()?);
-
-    //         let x: Object = array.field(0x10)?;
-    //         println!("{:?}", x.get_type()?.get_name()?);
-
-    //         Ok(())
-    //     }
-    // }
-
-    // pub fn towers(&self) -> Result<()> {
-    //     unsafe {
-    //         let list: Object = self.field(0x00c0)?;
-    //         assert_eq!("List`1", list.get_type()?.get_name()?);
-
-    //         let len: u32 = list.field(0x0008)?;
-    //         println!("{}", len);
-
-    //         let array: Object = list.field(0x0000)?;
-    //         println!("{:?}", array.get_type()?.get_name()?);
-
-    //         Ok(())
-    //     }
-    // }
 }
 
 impl Map {
